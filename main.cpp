@@ -292,7 +292,7 @@ int main(int argc, char* argv[]) {
     }
     
     const char* mode = argv[1];
-    const char* shm_name = (argc >= 3) ? argv[2] : "eshm_demo";
+    const char* shm_name = (argc >= 3) ? argv[2] : "eshm1";
     
     std::cout << "=== High-Performance Enhanced SHM Demo ===" << std::endl;
     std::cout << "SHM Name: " << shm_name << std::endl;

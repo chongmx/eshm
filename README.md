@@ -124,6 +124,16 @@ testESHM/
 ├── scripts/            # Test and utility scripts
 │   ├── test_reconnect_retry.sh
 │   └── test_full_reconnect.sh
+├── py/                 # Python wrapper
+│   ├── eshm.py         # Python bindings
+│   ├── build_shared_lib.sh  # Build script
+│   ├── README.md       # Python documentation
+│   └── examples/       # Python examples
+│       ├── simple_master.py
+│       ├── simple_slave.py
+│       ├── advanced_example.py
+│       ├── reconnect_demo.py
+│       └── performance_test.py
 └── docs/               # Documentation
     ├── QUICK_START.md
     ├── HIGH_PERFORMANCE_FEATURES.md
@@ -132,6 +142,7 @@ testESHM/
 
 ## Demo Application
 
+### C++ Demo
 ```bash
 # Start master
 ./build/eshm_demo master my_shm
@@ -142,6 +153,38 @@ testESHM/
 # Auto role (becomes master if no SHM, slave otherwise)
 ./build/eshm_demo auto my_shm
 ```
+
+### Python Demo
+```bash
+# Build Python wrapper first
+cd py && ./build_shared_lib.sh && cd ..
+
+# Start master
+python3 py/examples/simple_master.py
+
+# Start slave (in another terminal)
+python3 py/examples/simple_slave.py
+```
+
+See [py/README.md](py/README.md) for complete Python documentation.
+
+## C++ ↔ Python Interoperability
+
+ESHM supports **seamless interoperability** between C++ and Python processes!
+
+You can mix and match:
+- C++ Master + Python Slave
+- Python Master + C++ Slave
+
+```bash
+# Terminal 1: C++ master
+./build/eshm_demo master my_shm
+
+# Terminal 2: Python slave
+python3 py/examples/simple_slave.py my_shm
+```
+
+Both use the same SHM naming convention. See [INTEROP_TEST_RESULTS.md](INTEROP_TEST_RESULTS.md) for details and test results.
 
 ## Documentation
 

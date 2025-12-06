@@ -1,6 +1,7 @@
 #include "eshm.h"
-#include <sys/ipc.h>
-#include <sys/shm.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <string.h>
@@ -18,8 +19,8 @@
 struct ESHMHandle {
     ESHMConfig config;
     enum ESHMRole actual_role;
-    int shm_id;
-    key_t shm_key;
+    int shm_fd;                   // POSIX shared memory file descriptor
+    char shm_name[256];           // POSIX shared memory name (with / prefix)
     ESHMData* volatile shm_data;  // Volatile to ensure visibility across threads
     bool is_creator;
     
@@ -116,32 +117,35 @@ static int init_shm_data(ESHMData* data, uint32_t stale_threshold_ms) {
     return ESHM_SUCCESS;
 }
 
-// Generate SHM key from name
-static key_t generate_shm_key(const char* name) {
-    key_t key = 0;
-    for (const char* p = name; *p != '\0'; p++) {
-        key = (key << 5) + key + *p;
+// Generate POSIX SHM name from user-provided name
+// POSIX SHM names must start with / and contain no other /
+static void generate_shm_name(char* dest, size_t dest_size, const char* name) {
+    // Ensure name starts with /
+    snprintf(dest, dest_size, "/eshm_%s", name);
+
+    // Replace any / in the name with _
+    for (char* p = dest + 1; *p != '\0'; p++) {
+        if (*p == '/') {
+            *p = '_';
+        }
     }
-    return key;
 }
 
-// Check if SHM exists
-static bool shm_exists(key_t key) {
-    int shm_id = shmget(key, 0, 0);
-    return (shm_id != -1);
+// Check if POSIX SHM exists
+static bool shm_exists(const char* shm_name) {
+    int fd = shm_open(shm_name, O_RDONLY, 0);
+    if (fd == -1) {
+        return false;
+    }
+    close(fd);
+    return true;
 }
 
-// Delete existing SHM
-static int delete_shm(key_t key) {
-    int shm_id = shmget(key, 0, 0);
-    if (shm_id == -1) {
-        return ESHM_SUCCESS;
-    }
-    
-    if (shmctl(shm_id, IPC_RMID, NULL) == -1) {
+// Delete existing POSIX SHM
+static int delete_shm(const char* shm_name) {
+    if (shm_unlink(shm_name) == -1 && errno != ENOENT) {
         return ESHM_ERROR_SHM_DELETE;
     }
-    
     return ESHM_SUCCESS;
 }
 
@@ -217,24 +221,27 @@ static void* monitor_thread_func(void* arg) {
                     // Wait 20ms to be safe (2 heartbeat cycles + 2 monitor cycles)
                     sleep_ms(20);
 
-                    shmdt(old_shm_data);
+                    munmap(old_shm_data, sizeof(ESHMData));
                 }
 
                 // Try to attach to new/restarted SHM
-                int new_shm_id = shmget(handle->shm_key, sizeof(ESHMData), 0666);
-                if (new_shm_id != -1) {
-                    ESHMData* new_shm_data = (ESHMData*)shmat(new_shm_id, NULL, 0);
-                    if (new_shm_data != (void*)-1 && new_shm_data->header.magic == ESHM_MAGIC) {
+                int new_shm_fd = shm_open(handle->shm_name, O_RDWR, 0666);
+                if (new_shm_fd != -1) {
+                    ESHMData* new_shm_data = (ESHMData*)mmap(NULL, sizeof(ESHMData),
+                                                             PROT_READ | PROT_WRITE,
+                                                             MAP_SHARED, new_shm_fd, 0);
+                    if (new_shm_data != MAP_FAILED && new_shm_data->header.magic == ESHM_MAGIC) {
                         // Check if this is a NEW master (heartbeat should be different from last known)
                         uint64_t new_master_heartbeat = new_shm_data->header.master_heartbeat;
 
                         // If heartbeat hasn't changed, this is still the old/dead master, don't reconnect
                         if (new_master_heartbeat == handle->last_remote_heartbeat) {
-                            shmdt(new_shm_data);
+                            munmap(new_shm_data, sizeof(ESHMData));
+                            close(new_shm_fd);
                             // Don't print error message, just silently retry
                         } else {
                             // Successfully reattached to a NEW master!
-                            handle->shm_id = new_shm_id;
+                            handle->shm_fd = new_shm_fd;
                             handle->shm_data = new_shm_data;
 
                             // Reset slave info
@@ -257,10 +264,13 @@ static void* monitor_thread_func(void* arg) {
                         }
                     } else {
                         // Failed to attach or invalid
-                        if (new_shm_data != (void*)-1) {
-                            shmdt(new_shm_data);
+                        if (new_shm_data != MAP_FAILED) {
+                            munmap(new_shm_data, sizeof(ESHMData));
                         }
+                        close(new_shm_fd);
                     }
+                } else {
+                    // shm_open failed, no fd to close
                 }
 
                 fprintf(stderr, "[ESHM] Reattach failed, will retry...\n");
@@ -351,51 +361,62 @@ ESHMHandle* eshm_init(const ESHMConfig* config) {
     if (!config || !config->shm_name) {
         return NULL;
     }
-    
+
     ESHMHandle* handle = (ESHMHandle*)calloc(1, sizeof(ESHMHandle));
     if (!handle) {
         return NULL;
     }
-    
+
     // Copy configuration
     handle->config = *config;
     handle->config.shm_name = strdup(config->shm_name);
     handle->actual_role = config->role;
     handle->is_creator = false;
-    handle->shm_id = -1;
+    handle->shm_fd = -1;
     handle->shm_data = NULL;
     handle->threads_running = false;
-    
-    // Generate SHM key
-    handle->shm_key = generate_shm_key(config->shm_name);
-    
-    bool shm_existed = shm_exists(handle->shm_key);
+
+    // Generate POSIX SHM name (e.g., "/eshm_demo")
+    generate_shm_name(handle->shm_name, sizeof(handle->shm_name), config->shm_name);
+
+    bool shm_existed = shm_exists(handle->shm_name);
     
     // Role-based initialization
     if (config->role == ESHM_ROLE_MASTER) {
         if (shm_existed) {
             // Try to attach and check if slave is still alive
-            int temp_shm_id = shmget(handle->shm_key, sizeof(ESHMData), 0666);
-            if (temp_shm_id != -1) {
-                ESHMData* temp_data = (ESHMData*)shmat(temp_shm_id, NULL, 0);
-                if (temp_data != (void*)-1) {
+            int temp_shm_fd = shm_open(handle->shm_name, O_RDWR, 0666);
+            if (temp_shm_fd != -1) {
+                ESHMData* temp_data = (ESHMData*)mmap(NULL, sizeof(ESHMData),
+                                                       PROT_READ | PROT_WRITE,
+                                                       MAP_SHARED, temp_shm_fd, 0);
+                if (temp_data != MAP_FAILED) {
                     bool slave_alive = temp_data->header.slave_alive;
                     uint32_t old_generation = temp_data->header.master_generation;
-                    shmdt(temp_data);
+                    munmap(temp_data, sizeof(ESHMData));
 
                     if (slave_alive) {
                         // Slave is alive, don't delete - just takeover
                         fprintf(stderr, "[ESHM] Master found existing SHM with alive slave, taking over (generation %u->%u)...\n",
                                 old_generation, old_generation + 1);
-                        handle->shm_id = temp_shm_id;
+                        handle->shm_fd = temp_shm_fd;
                         handle->is_creator = false;  // Not creating, taking over
                     } else {
                         // Slave not alive, safe to delete
                         fprintf(stderr, "[ESHM] Master found stale SHM, deleting it...\n");
-                        delete_shm(handle->shm_key);
-                        handle->shm_id = shmget(handle->shm_key, sizeof(ESHMData), IPC_CREAT | IPC_EXCL | 0666);
-                        if (handle->shm_id == -1) {
+                        close(temp_shm_fd);
+                        delete_shm(handle->shm_name);
+                        handle->shm_fd = shm_open(handle->shm_name, O_CREAT | O_EXCL | O_RDWR, 0666);
+                        if (handle->shm_fd == -1) {
                             fprintf(stderr, "[ESHM] Failed to create SHM: %s\n", strerror(errno));
+                            free((void*)handle->config.shm_name);
+                            free(handle);
+                            return NULL;
+                        }
+                        if (ftruncate(handle->shm_fd, sizeof(ESHMData)) == -1) {
+                            fprintf(stderr, "[ESHM] Failed to set SHM size: %s\n", strerror(errno));
+                            close(handle->shm_fd);
+                            shm_unlink(handle->shm_name);
                             free((void*)handle->config.shm_name);
                             free(handle);
                             return NULL;
@@ -403,10 +424,19 @@ ESHMHandle* eshm_init(const ESHMConfig* config) {
                         handle->is_creator = true;
                     }
                 } else {
-                    delete_shm(handle->shm_key);
-                    handle->shm_id = shmget(handle->shm_key, sizeof(ESHMData), IPC_CREAT | IPC_EXCL | 0666);
-                    if (handle->shm_id == -1) {
+                    close(temp_shm_fd);
+                    delete_shm(handle->shm_name);
+                    handle->shm_fd = shm_open(handle->shm_name, O_CREAT | O_EXCL | O_RDWR, 0666);
+                    if (handle->shm_fd == -1) {
                         fprintf(stderr, "[ESHM] Failed to create SHM: %s\n", strerror(errno));
+                        free((void*)handle->config.shm_name);
+                        free(handle);
+                        return NULL;
+                    }
+                    if (ftruncate(handle->shm_fd, sizeof(ESHMData)) == -1) {
+                        fprintf(stderr, "[ESHM] Failed to set SHM size: %s\n", strerror(errno));
+                        close(handle->shm_fd);
+                        shm_unlink(handle->shm_name);
                         free((void*)handle->config.shm_name);
                         free(handle);
                         return NULL;
@@ -414,9 +444,17 @@ ESHMHandle* eshm_init(const ESHMConfig* config) {
                     handle->is_creator = true;
                 }
             } else {
-                handle->shm_id = shmget(handle->shm_key, sizeof(ESHMData), IPC_CREAT | IPC_EXCL | 0666);
-                if (handle->shm_id == -1) {
+                handle->shm_fd = shm_open(handle->shm_name, O_CREAT | O_EXCL | O_RDWR, 0666);
+                if (handle->shm_fd == -1) {
                     fprintf(stderr, "[ESHM] Failed to create SHM: %s\n", strerror(errno));
+                    free((void*)handle->config.shm_name);
+                    free(handle);
+                    return NULL;
+                }
+                if (ftruncate(handle->shm_fd, sizeof(ESHMData)) == -1) {
+                    fprintf(stderr, "[ESHM] Failed to set SHM size: %s\n", strerror(errno));
+                    close(handle->shm_fd);
+                    shm_unlink(handle->shm_name);
                     free((void*)handle->config.shm_name);
                     free(handle);
                     return NULL;
@@ -424,9 +462,17 @@ ESHMHandle* eshm_init(const ESHMConfig* config) {
                 handle->is_creator = true;
             }
         } else {
-            handle->shm_id = shmget(handle->shm_key, sizeof(ESHMData), IPC_CREAT | IPC_EXCL | 0666);
-            if (handle->shm_id == -1) {
+            handle->shm_fd = shm_open(handle->shm_name, O_CREAT | O_EXCL | O_RDWR, 0666);
+            if (handle->shm_fd == -1) {
                 fprintf(stderr, "[ESHM] Failed to create SHM: %s\n", strerror(errno));
+                free((void*)handle->config.shm_name);
+                free(handle);
+                return NULL;
+            }
+            if (ftruncate(handle->shm_fd, sizeof(ESHMData)) == -1) {
+                fprintf(stderr, "[ESHM] Failed to set SHM size: %s\n", strerror(errno));
+                close(handle->shm_fd);
+                shm_unlink(handle->shm_name);
                 free((void*)handle->config.shm_name);
                 free(handle);
                 return NULL;
@@ -437,29 +483,37 @@ ESHMHandle* eshm_init(const ESHMConfig* config) {
         handle->actual_role = ESHM_ROLE_MASTER;
         
     } else if (config->role == ESHM_ROLE_SLAVE) {
-        handle->shm_id = shmget(handle->shm_key, sizeof(ESHMData), 0666);
-        if (handle->shm_id == -1) {
+        handle->shm_fd = shm_open(handle->shm_name, O_RDWR, 0666);
+        if (handle->shm_fd == -1) {
             fprintf(stderr, "[ESHM] Slave failed to attach to SHM: %s\n", strerror(errno));
             free((void*)handle->config.shm_name);
             free(handle);
             return NULL;
         }
-        
+
         handle->is_creator = false;
         handle->actual_role = ESHM_ROLE_SLAVE;
         
     } else if (config->role == ESHM_ROLE_AUTO) {
         if (shm_existed) {
-            handle->shm_id = shmget(handle->shm_key, sizeof(ESHMData), 0666);
-            if (handle->shm_id != -1) {
+            handle->shm_fd = shm_open(handle->shm_name, O_RDWR, 0666);
+            if (handle->shm_fd != -1) {
                 handle->is_creator = false;
                 handle->actual_role = ESHM_ROLE_SLAVE;
                 fprintf(stderr, "[ESHM] Auto role: attached as SLAVE\n");
             } else {
-                delete_shm(handle->shm_key);
-                handle->shm_id = shmget(handle->shm_key, sizeof(ESHMData), IPC_CREAT | IPC_EXCL | 0666);
-                if (handle->shm_id == -1) {
+                delete_shm(handle->shm_name);
+                handle->shm_fd = shm_open(handle->shm_name, O_CREAT | O_EXCL | O_RDWR, 0666);
+                if (handle->shm_fd == -1) {
                     fprintf(stderr, "[ESHM] Auto role failed to create SHM: %s\n", strerror(errno));
+                    free((void*)handle->config.shm_name);
+                    free(handle);
+                    return NULL;
+                }
+                if (ftruncate(handle->shm_fd, sizeof(ESHMData)) == -1) {
+                    fprintf(stderr, "[ESHM] Failed to set SHM size: %s\n", strerror(errno));
+                    close(handle->shm_fd);
+                    shm_unlink(handle->shm_name);
                     free((void*)handle->config.shm_name);
                     free(handle);
                     return NULL;
@@ -469,9 +523,17 @@ ESHMHandle* eshm_init(const ESHMConfig* config) {
                 fprintf(stderr, "[ESHM] Auto role: promoted to MASTER\n");
             }
         } else {
-            handle->shm_id = shmget(handle->shm_key, sizeof(ESHMData), IPC_CREAT | IPC_EXCL | 0666);
-            if (handle->shm_id == -1) {
+            handle->shm_fd = shm_open(handle->shm_name, O_CREAT | O_EXCL | O_RDWR, 0666);
+            if (handle->shm_fd == -1) {
                 fprintf(stderr, "[ESHM] Auto role failed to create SHM: %s\n", strerror(errno));
+                free((void*)handle->config.shm_name);
+                free(handle);
+                return NULL;
+            }
+            if (ftruncate(handle->shm_fd, sizeof(ESHMData)) == -1) {
+                fprintf(stderr, "[ESHM] Failed to set SHM size: %s\n", strerror(errno));
+                close(handle->shm_fd);
+                shm_unlink(handle->shm_name);
                 free((void*)handle->config.shm_name);
                 free(handle);
                 return NULL;
@@ -482,13 +544,16 @@ ESHMHandle* eshm_init(const ESHMConfig* config) {
         }
     }
     
-    // Attach to shared memory
-    handle->shm_data = (ESHMData*)shmat(handle->shm_id, NULL, 0);
-    if (handle->shm_data == (void*)-1) {
-        fprintf(stderr, "[ESHM] Failed to attach to SHM: %s\n", strerror(errno));
+    // Map shared memory
+    handle->shm_data = (ESHMData*)mmap(NULL, sizeof(ESHMData),
+                                        PROT_READ | PROT_WRITE,
+                                        MAP_SHARED, handle->shm_fd, 0);
+    if (handle->shm_data == MAP_FAILED) {
+        fprintf(stderr, "[ESHM] Failed to map SHM: %s\n", strerror(errno));
         if (handle->is_creator) {
-            shmctl(handle->shm_id, IPC_RMID, NULL);
+            shm_unlink(handle->shm_name);
         }
+        close(handle->shm_fd);
         free((void*)handle->config.shm_name);
         free(handle);
         return NULL;
@@ -499,8 +564,9 @@ ESHMHandle* eshm_init(const ESHMConfig* config) {
         int ret = init_shm_data(handle->shm_data, config->stale_threshold_ms);
         if (ret != ESHM_SUCCESS) {
             fprintf(stderr, "[ESHM] Failed to initialize SHM data\n");
-            shmdt(handle->shm_data);
-            shmctl(handle->shm_id, IPC_RMID, NULL);
+            munmap(handle->shm_data, sizeof(ESHMData));
+            close(handle->shm_fd);
+            shm_unlink(handle->shm_name);
             free((void*)handle->config.shm_name);
             free(handle);
             return NULL;
@@ -509,7 +575,8 @@ ESHMHandle* eshm_init(const ESHMConfig* config) {
         // Validate existing SHM
         if (handle->shm_data->header.magic != ESHM_MAGIC) {
             fprintf(stderr, "[ESHM] Invalid SHM magic number\n");
-            shmdt(handle->shm_data);
+            munmap(handle->shm_data, sizeof(ESHMData));
+            close(handle->shm_fd);
             free((void*)handle->config.shm_name);
             free(handle);
             return NULL;
@@ -561,36 +628,41 @@ int eshm_destroy(ESHMHandle* handle) {
     if (!handle) {
         return ESHM_ERROR_INVALID_PARAM;
     }
-    
+
     // Stop threads
     if (handle->threads_running) {
         handle->threads_running = false;
         pthread_join(handle->heartbeat_thread, NULL);
         pthread_join(handle->monitor_thread, NULL);
     }
-    
+
     // Mark ourselves as not alive
-    if (handle->shm_data) {
+    if (handle->shm_data && handle->shm_data != MAP_FAILED) {
         if (handle->actual_role == ESHM_ROLE_MASTER) {
             handle->shm_data->header.master_alive = 0;
         } else {
             handle->shm_data->header.slave_alive = 0;
         }
-        
-        shmdt(handle->shm_data);
+
+        munmap(handle->shm_data, sizeof(ESHMData));
     }
-    
+
+    // Close file descriptor
+    if (handle->shm_fd != -1) {
+        close(handle->shm_fd);
+    }
+
     // Delete shared memory if we created it and auto_cleanup is enabled
-    if (handle->is_creator && handle->config.auto_cleanup && handle->shm_id != -1) {
-        shmctl(handle->shm_id, IPC_RMID, NULL);
+    if (handle->is_creator && handle->config.auto_cleanup) {
+        shm_unlink(handle->shm_name);
     }
-    
+
     // Free resources
     if (handle->config.shm_name) {
         free((void*)handle->config.shm_name);
     }
     free(handle);
-    
+
     return ESHM_SUCCESS;
 }
 

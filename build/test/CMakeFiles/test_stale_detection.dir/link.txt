@@ -1,0 +1,1 @@
+/usr/bin/c++  -Wall -Wextra -pthread CMakeFiles/test_stale_detection.dir/test_stale_detection.cpp.o -o test_stale_detection  ../libeshm.a -lpthread -lrt 

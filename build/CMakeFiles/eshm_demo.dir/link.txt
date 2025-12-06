@@ -1,0 +1,1 @@
+/usr/bin/c++  -Wall -Wextra -pthread CMakeFiles/eshm_demo.dir/main.cpp.o -o eshm_demo  libeshm.a -lpthread -lrt 

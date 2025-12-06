@@ -1,0 +1,1 @@
+/usr/bin/c++  -Wall -Wextra -pthread CMakeFiles/test_master_slave.dir/test_master_slave.cpp.o -o test_master_slave  ../libeshm.a -lpthread -lrt 

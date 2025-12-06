@@ -1,0 +1,2 @@
+/usr/bin/ar qc libeshm.a CMakeFiles/eshm.dir/eshm.cpp.o
+/usr/bin/ranlib libeshm.a

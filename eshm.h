@@ -60,16 +60,15 @@ int eshm_destroy(ESHMHandle* handle);
 // Returns: ESHM_SUCCESS on success, error code on failure
 int eshm_write(ESHMHandle* handle, const void* data, size_t size);
 
-// Read data from shared memory (automatically selects correct channel)
+// Simple read with default timeout (1000ms)
 // Parameters:
 //   handle: ESHM handle
 //   buffer: buffer to receive data
 //   buffer_size: size of buffer
-//   bytes_read: pointer to receive actual bytes read (can be NULL)
-// Returns: ESHM_SUCCESS on success, error code on failure
-int eshm_read(ESHMHandle* handle, void* buffer, size_t buffer_size, size_t* bytes_read);
+// Returns: number of bytes read on success (can be 0), negative error code on failure
+int eshm_read(ESHMHandle* handle, void* buffer, size_t buffer_size);
 
-// Try to read data with timeout (non-blocking with timeout)
+// Extended read with timeout and explicit bytes_read parameter
 // Parameters:
 //   handle: ESHM handle
 //   buffer: buffer to receive data
@@ -77,8 +76,8 @@ int eshm_read(ESHMHandle* handle, void* buffer, size_t buffer_size, size_t* byte
 //   bytes_read: pointer to receive actual bytes read (can be NULL)
 //   timeout_ms: timeout in milliseconds (0 = non-blocking)
 // Returns: ESHM_SUCCESS on success, ESHM_ERROR_NO_DATA if no data, error code on failure
-int eshm_read_timeout(ESHMHandle* handle, void* buffer, size_t buffer_size, 
-                       size_t* bytes_read, uint32_t timeout_ms);
+int eshm_read_ex(ESHMHandle* handle, void* buffer, size_t buffer_size,
+                 size_t* bytes_read, uint32_t timeout_ms);
 
 // Update heartbeat (called automatically by read/write, but can be called manually)
 // Parameters:

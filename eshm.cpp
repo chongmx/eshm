@@ -724,8 +724,28 @@ int eshm_read_timeout(ESHMHandle* handle, void* buffer, size_t buffer_size,
     }
 }
 
-int eshm_read(ESHMHandle* handle, void* buffer, size_t buffer_size, size_t* bytes_read) {
-    return eshm_read_timeout(handle, buffer, buffer_size, bytes_read, 0xFFFFFFFF);
+// Extended read with explicit bytes_read and timeout
+int eshm_read_ex(ESHMHandle* handle, void* buffer, size_t buffer_size,
+                 size_t* bytes_read, uint32_t timeout_ms) {
+    return eshm_read_timeout(handle, buffer, buffer_size, bytes_read, timeout_ms);
+}
+
+// Simple read API - returns number of bytes read or negative error code
+int eshm_read(ESHMHandle* handle, void* buffer, size_t buffer_size) {
+    if (!handle || !buffer) {
+        return ESHM_ERROR_INVALID_PARAM;
+    }
+
+    size_t bytes_read = 0;
+    int ret = eshm_read_timeout(handle, buffer, buffer_size, &bytes_read, 1000);
+
+    if (ret == ESHM_SUCCESS) {
+        // Return number of bytes read (can be 0 for event triggering)
+        return (int)bytes_read;
+    } else {
+        // Return negative error code
+        return ret;
+    }
 }
 
 int eshm_update_heartbeat(ESHMHandle* handle) {

@@ -38,7 +38,7 @@ void test_master_restart_reconnect() {
         for (int i = 0; i < 3; i++) {
             char recv_buffer[64];
             size_t bytes_read;
-            int ret = eshm_read_timeout(handle, recv_buffer, sizeof(recv_buffer), &bytes_read, 1000);
+            int ret = eshm_read_ex(handle, recv_buffer, sizeof(recv_buffer), &bytes_read, 1000);
             if (ret == ESHM_SUCCESS) {
                 std::cout << "[Slave] Received: " << recv_buffer << std::endl;
             }
@@ -66,7 +66,7 @@ void test_master_restart_reconnect() {
         for (int i = 0; i < 3; i++) {
             char recv_buffer[64];
             size_t bytes_read;
-            int ret = eshm_read_timeout(handle, recv_buffer, sizeof(recv_buffer), &bytes_read, 1000);
+            int ret = eshm_read_ex(handle, recv_buffer, sizeof(recv_buffer), &bytes_read, 1000);
             if (ret == ESHM_SUCCESS) {
                 std::cout << "[Slave] Received after restart: " << recv_buffer << std::endl;
             } else {

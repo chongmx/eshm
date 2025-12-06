@@ -1,1 +1,0 @@
-/usr/bin/c++  -Wall -Wextra -pthread CMakeFiles/test_performance.dir/test_performance.cpp.o -o test_performance  ../libeshm.a -lpthread -lrt 

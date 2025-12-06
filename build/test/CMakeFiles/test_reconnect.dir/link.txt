@@ -1,1 +1,0 @@
-/usr/bin/c++  -Wall -Wextra -pthread CMakeFiles/test_reconnect.dir/test_reconnect.cpp.o -o test_reconnect  ../libeshm.a -lpthread -lrt 

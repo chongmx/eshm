@@ -73,7 +73,7 @@ void slave_perf(const char* shm_name) {
     
     while (true) {
         size_t bytes_read;
-        int ret = eshm_read_timeout(handle, buffer, sizeof(buffer), &bytes_read, 100);
+        int ret = eshm_read_ex(handle, buffer, sizeof(buffer), &bytes_read, 100);
         if (ret == ESHM_SUCCESS) {
             msg_count++;
         } else if (ret == ESHM_ERROR_TIMEOUT || ret == ESHM_ERROR_NO_DATA) {
@@ -81,7 +81,7 @@ void slave_perf(const char* shm_name) {
             if (msg_count > 0) {
                 usleep(100000);
                 // Try one more time
-                ret = eshm_read_timeout(handle, buffer, sizeof(buffer), &bytes_read, 100);
+                ret = eshm_read_ex(handle, buffer, sizeof(buffer), &bytes_read, 100);
                 if (ret != ESHM_SUCCESS) {
                     break;
                 }

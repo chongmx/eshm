@@ -19,7 +19,7 @@ void test_null_params() {
     assert(ret == ESHM_ERROR_INVALID_PARAM);
     
     char buffer[64];
-    ret = eshm_read(NULL, buffer, sizeof(buffer), NULL);
+    ret = eshm_read(NULL, buffer, sizeof(buffer));
     assert(ret == ESHM_ERROR_INVALID_PARAM);
     
     std::cout << "  PASSED" << std::endl;
@@ -72,7 +72,7 @@ void test_read_nonexistent() {
     // Try to read when no data available (timeout immediately)
     char buffer[64];
     size_t bytes_read;
-    int ret = eshm_read_timeout(handle, buffer, sizeof(buffer), &bytes_read, 0);
+    int ret = eshm_read_ex(handle, buffer, sizeof(buffer), &bytes_read, 0);
     assert(ret == ESHM_ERROR_NO_DATA);
     std::cout << "  No data condition handled correctly" << std::endl;
     

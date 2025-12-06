@@ -52,7 +52,7 @@ void slave_stale_detect(const char* shm_name) {
         char buffer[64];
         size_t bytes_read;
         
-        int ret = eshm_read_timeout(handle, buffer, sizeof(buffer), &bytes_read, 500);
+        int ret = eshm_read_ex(handle, buffer, sizeof(buffer), &bytes_read, 500);
         if (ret == ESHM_SUCCESS) {
             std::cout << "[Slave] Received: " << buffer << std::endl;
             msg_count++;

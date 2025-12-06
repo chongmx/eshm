@@ -39,14 +39,33 @@ ESHMConfig config = eshm_default_config("my_shm");
 config.role = ESHM_ROLE_SLAVE;
 ESHMHandle* handle = eshm_init(&config);
 
-// Read/Write (automatic channel selection)
+// Simple read API (returns bytes read or negative error code, default 1000ms timeout)
 char buffer[256];
-size_t bytes_read;
-eshm_read_timeout(handle, buffer, sizeof(buffer), &bytes_read, 1000);
+int bytes_read = eshm_read(handle, buffer, sizeof(buffer));
+if (bytes_read >= 0) {
+    // Success - bytes_read contains number of bytes (can be 0 for event trigger)
+    printf("Received %d bytes\n", bytes_read);
+} else {
+    // Error - bytes_read contains negative error code
+    printf("Error: %s\n", eshm_error_string(bytes_read));
+}
+
+// Write data
 eshm_write(handle, "Hello", 6);
 
 // Cleanup
 eshm_destroy(handle);
+```
+
+### Advanced Usage (Extended API)
+
+```cpp
+// For custom timeout or explicit bytes_read parameter, use eshm_read_ex()
+size_t bytes_read;
+int ret = eshm_read_ex(handle, buffer, sizeof(buffer), &bytes_read, 500);
+if (ret == ESHM_SUCCESS) {
+    printf("Received %zu bytes\n", bytes_read);
+}
 ```
 
 ### Unlimited Retries
@@ -138,8 +157,8 @@ testESHM/
 
 ### Communication
 - `eshm_write()` - Write data (auto-selects channel)
-- `eshm_read()` - Read data with blocking
-- `eshm_read_timeout()` - Read data with timeout
+- `eshm_read()` - Simple read API (returns bytes read or negative error, default 1000ms timeout)
+- `eshm_read_ex()` - Extended read API with custom timeout and explicit bytes_read parameter
 
 ### Monitoring
 - `eshm_check_remote_alive()` - Check if remote endpoint is alive

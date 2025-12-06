@@ -79,7 +79,7 @@ void run_master(const char* shm_name) {
         // Try to receive message from slave (non-blocking with short timeout)
         char recv_buffer[256];
         size_t bytes_read;
-        ret = eshm_read_timeout(handle, recv_buffer, sizeof(recv_buffer), &bytes_read, 100);
+        ret = eshm_read_ex(handle, recv_buffer, sizeof(recv_buffer), &bytes_read, 100);
         if (ret == ESHM_SUCCESS) {
             std::cout << "[MASTER] Received: " << recv_buffer << std::endl;
         }
@@ -140,24 +140,26 @@ void run_slave(const char* shm_name) {
     gettimeofday(&last_stats_time, NULL);
     
     while (g_running) {
-        // Try to receive message from master
+        // Try to receive message from master using simplified API
         char recv_buffer[256];
-        size_t bytes_read;
-        int ret = eshm_read_timeout(handle, recv_buffer, sizeof(recv_buffer), &bytes_read, 1000);
-        if (ret == ESHM_SUCCESS) {
-            std::cout << "[SLAVE] Received: " << recv_buffer << std::endl;
+        int bytes_read = eshm_read(handle, recv_buffer, sizeof(recv_buffer));
+        if (bytes_read >= 0) {
+            // Success - bytes_read contains the number of bytes (can be 0 for event trigger)
+            if (bytes_read > 0) {
+                std::cout << "[SLAVE] Received (" << bytes_read << " bytes): " << recv_buffer << std::endl;
+            }
 
             // Send response
             char send_buffer[256];
             snprintf(send_buffer, sizeof(send_buffer), "ACK from slave #%d", message_count++);
-            ret = eshm_write(handle, send_buffer, strlen(send_buffer) + 1);
+            int ret = eshm_write(handle, send_buffer, strlen(send_buffer) + 1);
             if (ret == ESHM_SUCCESS) {
                 std::cout << "[SLAVE] Sent: " << send_buffer << std::endl;
             }
-        } else if (ret == ESHM_ERROR_MASTER_STALE) {
+        } else if (bytes_read == ESHM_ERROR_MASTER_STALE) {
             std::cerr << "[SLAVE] Master is stale, disconnecting..." << std::endl;
             break;
-        } else if (ret == ESHM_ERROR_TIMEOUT) {
+        } else if (bytes_read == ESHM_ERROR_TIMEOUT) {
             // Timeout or reconnection in progress, just continue
             // (No need to print, this is normal during reconnection)
         }
@@ -225,7 +227,7 @@ void run_auto(const char* shm_name) {
             
             char recv_buffer[256];
             size_t bytes_read;
-            ret = eshm_read_timeout(handle, recv_buffer, sizeof(recv_buffer), &bytes_read, 100);
+            ret = eshm_read_ex(handle, recv_buffer, sizeof(recv_buffer), &bytes_read, 100);
             if (ret == ESHM_SUCCESS) {
                 std::cout << "[AUTO-MASTER] Received: " << recv_buffer << std::endl;
             }
@@ -244,7 +246,7 @@ void run_auto(const char* shm_name) {
         while (g_running) {
             char recv_buffer[256];
             size_t bytes_read;
-            int ret = eshm_read_timeout(handle, recv_buffer, sizeof(recv_buffer), &bytes_read, 1000);
+            int ret = eshm_read_ex(handle, recv_buffer, sizeof(recv_buffer), &bytes_read, 1000);
             if (ret == ESHM_SUCCESS) {
                 std::cout << "[AUTO-SLAVE] Received: " << recv_buffer << std::endl;
                 

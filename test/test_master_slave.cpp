@@ -27,7 +27,7 @@ void master_process(const char* shm_name) {
         // Try to receive response from slave
         char recv_buffer[64];
         size_t bytes_read;
-        ret = eshm_read_timeout(handle, recv_buffer, sizeof(recv_buffer), &bytes_read, 2000);
+        ret = eshm_read_ex(handle, recv_buffer, sizeof(recv_buffer), &bytes_read, 2000);
         if (ret == ESHM_SUCCESS) {
             std::cout << "[Master] Received: " << recv_buffer << std::endl;
         }
@@ -65,7 +65,7 @@ void slave_process(const char* shm_name) {
         char recv_buffer[64];
         size_t bytes_read;
         
-        int ret = eshm_read_timeout(handle, recv_buffer, sizeof(recv_buffer), &bytes_read, 3000);
+        int ret = eshm_read_ex(handle, recv_buffer, sizeof(recv_buffer), &bytes_read, 3000);
         if (ret == ESHM_SUCCESS) {
             std::cout << "[Slave] Received: " << recv_buffer << std::endl;
             

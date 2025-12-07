@@ -41,28 +41,37 @@ with ESHM("test", role=ESHMRole.MASTER) as eshm:
 ```python
 from eshm import ESHM, ESHMRole
 
-with ESHM("my_shm", role=ESHMRole.MASTER) as eshm:
-    # Send message
-    eshm.write(b"Hello, World!")
+with ESHM("eshm1", role=ESHMRole.MASTER) as eshm:  # Default SHM name
+    # Send message with null terminator for C++ compatibility
+    eshm.write((b"Hello, World!" + b'\0')
+
+    # Or using string with null terminator
+    message = "Hello from Python\0"
+    eshm.write(message.encode('utf-8'))
 
     # Try to read response (non-blocking)
     response = eshm.try_read()
     if response:
-        print(f"Received: {response.decode('utf-8')}")
+        # Strip null terminators when displaying
+        print(f"Received: {response.decode('utf-8').rstrip(chr(0))}")
 ```
 
 **Slave Process:**
 ```python
 from eshm import ESHM, ESHMRole
 
-with ESHM("my_shm", role=ESHMRole.SLAVE) as eshm:
+with ESHM("eshm1", role=ESHMRole.SLAVE) as eshm:
     # Read message (default 1000ms timeout)
     data = eshm.read()
-    print(f"Received: {data.decode('utf-8')}")
+    # Strip null terminators and garbage bytes
+    message = data.decode('utf-8').rstrip('\0')
+    print(f"Received: {message}")
 
-    # Send response
-    eshm.write(b"ACK!")
+    # Send response with null terminator
+    eshm.write(b"ACK!\0")
 ```
+
+**Important**: Always include null terminators (`\0`) when communicating with C++ processes!
 
 ### Custom Timeout
 
@@ -141,16 +150,37 @@ class ESHMDisconnectBehavior(IntEnum):
 See the `examples/` directory for complete examples:
 
 ### Basic Examples
-- `simple_master.py` - Basic master that sends messages
-- `simple_slave.py` - Basic slave that receives and responds
+- `simple_master.py` - Basic master that sends messages (default SHM: "eshm1")
+- `simple_slave.py` - Basic slave that receives and responds (default SHM: "eshm1")
+- **Note**: Now includes null terminators for C++ compatibility
 
 Run them:
 ```bash
-# Terminal 1
+# Terminal 1 - Python master (or use C++ master: ./build/eshm_demo master eshm1)
 python3 py/examples/simple_master.py
 
-# Terminal 2
+# Terminal 2 - Python slave
 python3 py/examples/simple_slave.py
+
+# With custom SHM name
+python3 py/examples/simple_master.py my_shm
+python3 py/examples/simple_slave.py my_shm
+```
+
+### Performance Test
+- `performance_test.py` - Throughput and latency testing with configurable stats
+
+Run performance test:
+```bash
+# Terminal 1 - Python master
+python3 py/examples/performance_test.py master
+
+# Terminal 2 - Python slave (stats every 10000 messages by default)
+python3 py/examples/performance_test.py slave
+
+# Or with C++ master (faster at 1000 msg/sec)
+./build/eshm_demo master eshm1
+python3 py/examples/performance_test.py slave eshm1 2000  # Stats every 2000 msgs
 ```
 
 ### Advanced Examples

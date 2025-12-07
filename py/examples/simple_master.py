@@ -31,15 +31,16 @@ def main():
 
         try:
             while True:
-                # Send message to slave
+                # Send message to slave with null terminator for C++ compatibility
                 message = f"Hello from Python master #{message_count}"
-                eshm.write(message.encode('utf-8'))
+                eshm.write((message + '\0').encode('utf-8'))
                 print(f"[MASTER] Sent: {message}")
 
                 # Try to read response from slave (non-blocking)
                 response = eshm.try_read()
                 if response:
-                    print(f"[MASTER] Received: {response.decode('utf-8')}")
+                    # Decode and strip any null terminators or garbage
+                    print(f"[MASTER] Received: {response.decode('utf-8').rstrip(chr(0))}")
 
                 # Check if slave is alive
                 if not eshm.is_remote_alive():

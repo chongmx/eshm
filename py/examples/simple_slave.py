@@ -42,12 +42,13 @@ def main():
                     data = eshm.read()
 
                     if data:
-                        message = data.decode('utf-8')
+                        # Decode and strip any null terminators or garbage
+                        message = data.decode('utf-8').rstrip('\0')
                         print(f"[SLAVE] Received ({len(data)} bytes): {message}")
 
-                        # Send acknowledgment
+                        # Send acknowledgment with null terminator for C++ compatibility
                         response = f"ACK from Python slave #{message_count}"
-                        eshm.write(response.encode('utf-8'))
+                        eshm.write((response + '\0').encode('utf-8'))
                         print(f"[SLAVE] Sent: {response}")
 
                         message_count += 1

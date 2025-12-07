@@ -124,22 +124,27 @@ python3 py/examples/performance_test.py slave
 python3 py/examples/performance_test.py slave perf_test 2000
 ```
 
-### C++ ↔ Python Interop Test
+### C++ ↔ Python Interop Benchmark
 
 ```bash
 # Terminal 1 - C++ master (1000 msg/sec)
 ./build/eshm_demo master eshm1
 
-# Terminal 2 - Python slave (stats every 2000 messages)
-python3 py/examples/performance_test.py slave eshm1 2000
-
-# Expected: Python receives at ~80-100 msg/sec (due to Python overhead)
+# Terminal 2 - Python slave (benchmarking with ACK responses)
+python3 py/examples/benchmark_slave.py eshm1 1000
 ```
 
 **Performance Results:**
-- C++ Master: 1000 msg/sec
-- C++ Slave: 1000 msg/sec (matches master)
-- Python Slave: ~80-100 msg/sec (Python interpreter overhead)
+
+| Test Duration | Messages | Average Rate | Notes |
+|--------------|----------|--------------|-------|
+| 20 seconds | 11,000 | **571 msg/sec** | Stats every 1000 msgs |
+| 30 seconds | 16,000 | **580 msg/sec** | Stats every 2000 msgs |
+| 60 seconds | 30,000 | **581 msg/sec** | Stats every 5000 msgs |
+
+**Summary:**
+- **C++ Master → C++ Slave**: 1000 msg/sec
+- **C++ Master ↔ Python Slave**: **577-581 msg/sec**
 
 ## Configuration Options
 

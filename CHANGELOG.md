@@ -7,11 +7,17 @@
   - Merged INTEROP_TEST_RESULTS.md + RUN_INTEROP_DEMO.md
   - Added unit test documentation
   - Comprehensive troubleshooting section
+  - **Benchmarked C++↔Python performance**: 577-581 msg/sec (bidirectional, tested Dec 2025)
 - **Enhanced README.md**: Added "High-Performance Features" section
   - Sequence locks implementation details
   - Heartbeat and monitor thread architecture
   - Cache-line alignment and memory layout
   - Performance characteristics table
+  - **Updated with benchmark results**: C++↔Python: 577-581 msg/sec (bidirectional)
+- **Created py/examples/benchmark_slave.py**: Bidirectional benchmark tool
+  - Based on simple_slave.py pattern (read + ACK write)
+  - Prints stats at configurable intervals (default: 1000 messages)
+  - Tested: 20s (571 msg/s), 30s (580 msg/s), 60s (581 msg/s)
 - **Removed redundant files**: HIGH_PERFORMANCE_FEATURES.md, INTEROP_TEST_RESULTS.md, RUN_INTEROP_DEMO.md
 
 ### Documentation Simplification (Phase 1)

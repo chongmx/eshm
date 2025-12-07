@@ -14,20 +14,29 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from eshm import ESHM, ESHMRole
 
-def run_master():
+# Performance tuning parameters
+STATS_PRINT_INTERVAL = 10000  # Print stats every N messages
+
+def run_master(shm_name="perf_test"):
     """Run performance test master"""
     print("=== ESHM Performance Test - Master ===")
-    print(f"PID: {os.getpid()}\n")
+    print(f"PID: {os.getpid()}")
+    print(f"SHM Name: {shm_name}\n")
 
-    with ESHM("perf_test", role=ESHMRole.MASTER) as eshm:
+    with ESHM(shm_name, role=ESHMRole.MASTER) as eshm:
         print("Waiting for slave to connect...")
-        time.sleep(1)
 
-        # Wait for slave to be ready
+        # Wait for slave to be ready (check heartbeat)
+        timeout = 10  # 10 second timeout
+        start = time.time()
         while not eshm.is_remote_alive():
+            if time.time() - start > timeout:
+                print("ERROR: Slave did not connect within timeout!")
+                return
             time.sleep(0.1)
 
         print("Slave connected. Starting performance test...\n")
+        time.sleep(0.5)  # Give slave a moment to stabilize
 
         # Test 1: Throughput test
         print("=== Throughput Test ===")
@@ -53,8 +62,8 @@ def run_master():
         latencies = []
 
         for i in range(num_pings):
-            # Send ping
-            ping_msg = f"PING_{i}".encode('utf-8')
+            # Send ping with null terminator for C++ compatibility
+            ping_msg = (f"PING_{i}" + '\0').encode('utf-8')
             send_time = time.time()
             eshm.write(ping_msg)
 
@@ -83,38 +92,48 @@ def run_master():
         print(f"Master->Slave writes: {stats['m2s_write_count']}")
         print(f"Slave->Master reads: {stats['s2m_read_count']}")
 
-def run_slave():
+def run_slave(shm_name="perf_test"):
     """Run performance test slave"""
     print("=== ESHM Performance Test - Slave ===")
-    print(f"PID: {os.getpid()}\n")
+    print(f"PID: {os.getpid()}")
+    print(f"SHM Name: {shm_name}\n")
 
-    with ESHM("perf_test", role=ESHMRole.SLAVE) as eshm:
-        print("Connected to master. Ready for performance test...\n")
+    # Connect as slave (master must be running first)
+    with ESHM(shm_name, role=ESHMRole.SLAVE) as eshm:
+        print("Connected to master. Ready for performance test...")
+        print(f"Printing stats every {STATS_PRINT_INTERVAL} messages\n")
+        sys.stdout.flush()
 
         messages_received = 0
         pings_received = 0
+        start_time = time.time()
 
         try:
             while True:
-                # Try to read message (non-blocking)
-                data = eshm.try_read()
+                # Read message with short timeout to match master's rate
+                try:
+                    data = eshm.read(timeout_ms=10)  # 10ms timeout
 
-                if data:
-                    messages_received += 1
+                    if data:
+                        messages_received += 1
 
-                    # Check if it's a ping message
-                    if data.startswith(b"PING_"):
-                        pings_received += 1
-                        # Send pong response
-                        eshm.write(b"PONG")
+                        # Check if it's a ping message
+                        if data.startswith(b"PING_"):
+                            pings_received += 1
+                            # Send pong response
+                            eshm.write(b"PONG")
 
-                    # Print progress every 1000 messages
-                    if messages_received % 1000 == 0:
-                        print(f"Received {messages_received} messages ({pings_received} pings)")
+                        # Print progress at controlled intervals
+                        if messages_received % STATS_PRINT_INTERVAL == 0:
+                            elapsed = time.time() - start_time
+                            msg_per_sec = messages_received / elapsed if elapsed > 0 else 0
+                            print(f"[SLAVE] Messages: received={messages_received}, pings={pings_received}, "
+                                  f"rate={msg_per_sec:.0f} msg/sec")
+                            sys.stdout.flush()
 
-                else:
-                    # Small sleep when no data
-                    time.sleep(0.00001)  # 10us
+                except TimeoutError:
+                    # Timeout is normal when waiting for messages
+                    pass
 
         except KeyboardInterrupt:
             print("\n[SLAVE] Shutting down...")
@@ -123,20 +142,45 @@ def run_slave():
         print(f"Total pings responded: {pings_received}")
 
 def main():
+    global STATS_PRINT_INTERVAL
+
     if len(sys.argv) < 2:
-        print("Usage: python performance_test.py <master|slave>")
+        print("Usage: python performance_test.py <master|slave> [shm_name] [stats_interval]")
         print("\nPerformance Test:")
-        print("1. Start slave:  python performance_test.py slave")
-        print("2. Start master: python performance_test.py master")
-        print("\nThe master will run throughput and latency tests.")
+        print("IMPORTANT: Start in this order:")
+        print("1. Start master: python performance_test.py master [shm_name] [stats_interval]")
+        print("2. Start slave:  python performance_test.py slave [shm_name] [stats_interval]  (in another terminal)")
+        print("\nParameters:")
+        print("  shm_name: Shared memory name (default: 'perf_test')")
+        print(f"  stats_interval: Print stats every N messages (default: {STATS_PRINT_INTERVAL})")
+        print("\nFor C++ interop: Use 'eshm1' or match the C++ master's name")
+        print("\nExamples:")
+        print("  Python master + Python slave:")
+        print("    python performance_test.py master")
+        print("    python performance_test.py slave")
+        print("\n  C++ master + Python slave (stats every 5000 msgs):")
+        print("    ./build/eshm_demo master eshm1")
+        print("    python performance_test.py slave eshm1 5000")
         return
 
     mode = sys.argv[1]
+    shm_name = sys.argv[2] if len(sys.argv) > 2 else "perf_test"
+
+    # Optional stats interval parameter
+    if len(sys.argv) > 3:
+        try:
+            STATS_PRINT_INTERVAL = int(sys.argv[3])
+            if STATS_PRINT_INTERVAL <= 0:
+                print("Error: stats_interval must be positive")
+                return
+        except ValueError:
+            print(f"Error: Invalid stats_interval '{sys.argv[3]}' - must be an integer")
+            return
 
     if mode == "master":
-        run_master()
+        run_master(shm_name)
     elif mode == "slave":
-        run_slave()
+        run_slave(shm_name)
     else:
         print(f"Invalid mode: {mode}")
         print("Must be 'master' or 'slave'")

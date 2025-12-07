@@ -5,6 +5,11 @@
 #include <signal.h>
 #include <sys/time.h>
 
+// Performance tuning parameters
+#define MESSAGE_INTERVAL_US 1000           // Microseconds between messages (1ms = 1000 msg/sec)
+#define STATS_PRINT_INTERVAL_SEC 1.0       // Print stats every N seconds
+#define STATS_PRINT_CYCLES ((int)((STATS_PRINT_INTERVAL_SEC * 1000000.0) / MESSAGE_INTERVAL_US))
+
 static volatile bool g_running = true;
 
 void signal_handler(int sig) {
@@ -51,56 +56,53 @@ void run_master(const char* shm_name) {
     
     enum ESHMRole role;
     eshm_get_role(handle, &role);
-    std::cout << "[MASTER] Initialized with role: " 
+    std::cout << "[MASTER] Initialized with role: "
               << (role == ESHM_ROLE_MASTER ? "MASTER" : "SLAVE") << std::endl;
     std::cout << "[MASTER] Heartbeat thread running at 1ms intervals" << std::endl;
-    
+    std::cout << "[MASTER] Starting message loop at " << (1000000.0 / MESSAGE_INTERVAL_US)
+              << " msg/sec (printing stats every " << STATS_PRINT_CYCLES << " messages)" << std::endl;
+    std::cout.flush();
+
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
-    
+
     int message_count = 0;
-    
-    // Print stats every second
-    struct timeval last_stats_time;
-    gettimeofday(&last_stats_time, NULL);
-    
+    int cycle_count = 0;
+
     while (g_running) {
         // Send message to slave
         char send_buffer[256];
         snprintf(send_buffer, sizeof(send_buffer), "Hello from master #%d", message_count++);
-        
+
         int ret = eshm_write(handle, send_buffer, strlen(send_buffer) + 1);
-        if (ret == ESHM_SUCCESS) {
-            std::cout << "[MASTER] Sent: " << send_buffer << std::endl;
-        } else {
+        if (ret != ESHM_SUCCESS) {
             std::cerr << "[MASTER] Write error: " << eshm_error_string(ret) << std::endl;
         }
-        
+
         // Try to receive message from slave (non-blocking with short timeout)
         char recv_buffer[256];
         size_t bytes_read;
-        ret = eshm_read_ex(handle, recv_buffer, sizeof(recv_buffer), &bytes_read, 100);
-        if (ret == ESHM_SUCCESS) {
-            std::cout << "[MASTER] Received: " << recv_buffer << std::endl;
-        }
-        
-        // Check if slave is alive
-        bool slave_alive;
-        if (eshm_check_remote_alive(handle, &slave_alive) == ESHM_SUCCESS) {
-            if (!slave_alive) {
-                std::cout << "[MASTER] WARNING: Slave is stale/disconnected!" << std::endl;
+        ret = eshm_read_ex(handle, recv_buffer, sizeof(recv_buffer), &bytes_read, 10);
+
+        // Print progress at controlled intervals (not every message to avoid flooding)
+        cycle_count++;
+        if (cycle_count >= STATS_PRINT_CYCLES) {
+            cycle_count = 0;
+            std::cout << "[MASTER] Messages: sent=" << message_count
+                      << " (" << (1000000.0 / MESSAGE_INTERVAL_US) << " msg/sec)"
+                      << std::endl;
+            std::cout.flush();
+
+            // Check if slave is alive
+            bool slave_alive;
+            if (eshm_check_remote_alive(handle, &slave_alive) == ESHM_SUCCESS) {
+                if (!slave_alive) {
+                    std::cout << "[MASTER] WARNING: Slave is stale/disconnected!" << std::endl;
+                }
             }
         }
-        
-        // Print stats every second
-        struct timeval now;
-        gettimeofday(&now, NULL);
-        if (now.tv_sec > last_stats_time.tv_sec) {
-            print_stats(handle);
-            last_stats_time = now;
-        }
-        
-        usleep(500000);  // 500ms between messages
+
+        usleep(MESSAGE_INTERVAL_US);
     }
     
     std::cout << "\n[MASTER] Shutting down..." << std::endl;
@@ -125,60 +127,56 @@ void run_slave(const char* shm_name) {
     
     enum ESHMRole role;
     eshm_get_role(handle, &role);
-    std::cout << "[SLAVE] Initialized with role: " 
+    std::cout << "[SLAVE] Initialized with role: "
               << (role == ESHM_ROLE_MASTER ? "MASTER" : "SLAVE") << std::endl;
     std::cout << "[SLAVE] Heartbeat thread running at 1ms intervals" << std::endl;
     std::cout << "[SLAVE] Monitor thread checking master health" << std::endl;
-    
+    std::cout << "[SLAVE] Starting message loop at " << (1000000.0 / MESSAGE_INTERVAL_US)
+              << " msg/sec (printing stats every " << STATS_PRINT_CYCLES << " messages)" << std::endl;
+    std::cout.flush();
+
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
-    
-    int message_count = 0;
-    
-    // Print stats every second
-    struct timeval last_stats_time;
-    gettimeofday(&last_stats_time, NULL);
-    
-    while (g_running) {
-        // Try to receive message from master using simplified API
-        char recv_buffer[256];
-        int bytes_read = eshm_read(handle, recv_buffer, sizeof(recv_buffer));
-        if (bytes_read >= 0) {
-            // Success - bytes_read contains the number of bytes (can be 0 for event trigger)
-            if (bytes_read > 0) {
-                std::cout << "[SLAVE] Received (" << bytes_read << " bytes): " << recv_buffer << std::endl;
-            }
 
+    int message_count = 0;
+    int cycle_count = 0;
+
+    while (g_running) {
+        // Try to receive message from master (with short timeout matching message interval)
+        char recv_buffer[256];
+        size_t bytes_read_size;
+        int ret = eshm_read_ex(handle, recv_buffer, sizeof(recv_buffer), &bytes_read_size,
+                               (MESSAGE_INTERVAL_US / 1000) + 10);  // Convert to ms with margin
+
+        if (ret == ESHM_SUCCESS && bytes_read_size > 0) {
             // Send response
             char send_buffer[256];
             snprintf(send_buffer, sizeof(send_buffer), "ACK from slave #%d", message_count++);
-            int ret = eshm_write(handle, send_buffer, strlen(send_buffer) + 1);
-            if (ret == ESHM_SUCCESS) {
-                std::cout << "[SLAVE] Sent: " << send_buffer << std::endl;
-            }
-        } else if (bytes_read == ESHM_ERROR_MASTER_STALE) {
+            eshm_write(handle, send_buffer, strlen(send_buffer) + 1);
+        } else if (ret == ESHM_ERROR_MASTER_STALE) {
             std::cerr << "[SLAVE] Master is stale, disconnecting..." << std::endl;
             break;
-        } else if (bytes_read == ESHM_ERROR_TIMEOUT) {
-            // Timeout or reconnection in progress, just continue
-            // (No need to print, this is normal during reconnection)
         }
-        
-        // Check if master is alive
-        bool master_alive;
-        if (eshm_check_remote_alive(handle, &master_alive) == ESHM_SUCCESS) {
-            if (!master_alive) {
-                std::cout << "[SLAVE] WARNING: Master is stale/disconnected!" << std::endl;
+
+        // Print progress at controlled intervals (not every message to avoid flooding)
+        cycle_count++;
+        if (cycle_count >= STATS_PRINT_CYCLES) {
+            cycle_count = 0;
+            std::cout << "[SLAVE] Messages: received=" << message_count
+                      << " (" << (1000000.0 / MESSAGE_INTERVAL_US) << " msg/sec)"
+                      << std::endl;
+            std::cout.flush();
+
+            // Check if master is alive
+            bool master_alive;
+            if (eshm_check_remote_alive(handle, &master_alive) == ESHM_SUCCESS) {
+                if (!master_alive) {
+                    std::cout << "[SLAVE] WARNING: Master is stale/disconnected!" << std::endl;
+                }
             }
         }
-        
-        // Print stats every second
-        struct timeval now;
-        gettimeofday(&now, NULL);
-        if (now.tv_sec > last_stats_time.tv_sec) {
-            print_stats(handle);
-            last_stats_time = now;
-        }
+
+        usleep(MESSAGE_INTERVAL_US);
     }
     
     std::cout << "\n[SLAVE] Shutting down..." << std::endl;
@@ -208,65 +206,59 @@ void run_auto(const char* shm_name) {
     
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
-    
+
     int message_count = 0;
-    
-    struct timeval last_stats_time;
-    gettimeofday(&last_stats_time, NULL);
-    
+    int cycle_count = 0;
+
     if (role == ESHM_ROLE_MASTER) {
         // Act as master
         while (g_running) {
             char send_buffer[256];
             snprintf(send_buffer, sizeof(send_buffer), "Hello from AUTO-MASTER #%d", message_count++);
-            
-            int ret = eshm_write(handle, send_buffer, strlen(send_buffer) + 1);
-            if (ret == ESHM_SUCCESS) {
-                std::cout << "[AUTO-MASTER] Sent: " << send_buffer << std::endl;
-            }
-            
+
+            eshm_write(handle, send_buffer, strlen(send_buffer) + 1);
+
             char recv_buffer[256];
             size_t bytes_read;
-            ret = eshm_read_ex(handle, recv_buffer, sizeof(recv_buffer), &bytes_read, 100);
-            if (ret == ESHM_SUCCESS) {
-                std::cout << "[AUTO-MASTER] Received: " << recv_buffer << std::endl;
+            eshm_read_ex(handle, recv_buffer, sizeof(recv_buffer), &bytes_read, 10);
+
+            // Print progress at controlled intervals
+            cycle_count++;
+            if (cycle_count >= STATS_PRINT_CYCLES) {
+                cycle_count = 0;
+                std::cout << "[AUTO-MASTER] Messages: sent=" << message_count
+                          << " (" << (1000000.0 / MESSAGE_INTERVAL_US) << " msg/sec)"
+                          << std::endl;
             }
-            
-            struct timeval now;
-            gettimeofday(&now, NULL);
-            if (now.tv_sec > last_stats_time.tv_sec) {
-                print_stats(handle);
-                last_stats_time = now;
-            }
-            
-            usleep(500000);  // 500ms
+
+            usleep(MESSAGE_INTERVAL_US);
         }
     } else {
         // Act as slave
         while (g_running) {
             char recv_buffer[256];
             size_t bytes_read;
-            int ret = eshm_read_ex(handle, recv_buffer, sizeof(recv_buffer), &bytes_read, 1000);
-            if (ret == ESHM_SUCCESS) {
-                std::cout << "[AUTO-SLAVE] Received: " << recv_buffer << std::endl;
-                
+            int ret = eshm_read_ex(handle, recv_buffer, sizeof(recv_buffer), &bytes_read,
+                                   (MESSAGE_INTERVAL_US / 1000) + 10);
+            if (ret == ESHM_SUCCESS && bytes_read > 0) {
                 char send_buffer[256];
                 snprintf(send_buffer, sizeof(send_buffer), "ACK from AUTO-SLAVE #%d", message_count++);
-                ret = eshm_write(handle, send_buffer, strlen(send_buffer) + 1);
-                if (ret == ESHM_SUCCESS) {
-                    std::cout << "[AUTO-SLAVE] Sent: " << send_buffer << std::endl;
-                }
+                eshm_write(handle, send_buffer, strlen(send_buffer) + 1);
             } else if (ret == ESHM_ERROR_MASTER_STALE) {
                 std::cerr << "[AUTO-SLAVE] Master is stale, exiting..." << std::endl;
                 break;
             }
-            
-            struct timeval now;
-            gettimeofday(&now, NULL);
-            if (now.tv_sec > last_stats_time.tv_sec) {
-                print_stats(handle);
-                last_stats_time = now;
+
+            // Print progress at controlled intervals
+            cycle_count++;
+            if (cycle_count >= STATS_PRINT_CYCLES) {
+                cycle_count = 0;
+                std::cout << "[AUTO-SLAVE] Messages: received=" << message_count
+                          << " (" << (1000000.0 / MESSAGE_INTERVAL_US) << " msg/sec)"
+                          << std::endl;
             }
+
+            usleep(MESSAGE_INTERVAL_US);
         }
     }
     

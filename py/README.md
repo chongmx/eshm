@@ -167,20 +167,21 @@ python3 py/examples/simple_master.py my_shm
 python3 py/examples/simple_slave.py my_shm
 ```
 
-### Performance Test
-- `performance_test.py` - Throughput and latency testing with configurable stats
+### Performance Benchmarks
+- `benchmark_master.py` - Python master benchmark (in tests/performance/)
+- `benchmark_slave.py` - Python slave benchmark with statistics (in tests/performance/)
 
-Run performance test:
+Run performance benchmarks:
 ```bash
-# Terminal 1 - Python master
-python3 py/examples/performance_test.py master
+# Terminal 1 - C++ benchmark master (unlimited rate)
+./build/test/test_benchmark_master master eshm1
 
-# Terminal 2 - Python slave (stats every 10000 messages by default)
-python3 py/examples/performance_test.py slave
+# Terminal 2 - Python slave benchmark (stats every 1000 messages)
+python3 py/tests/performance/benchmark_slave.py eshm1 1000
 
-# Or with C++ master (faster at 1000 msg/sec)
-./build/eshm_demo master eshm1
-python3 py/examples/performance_test.py slave eshm1 2000  # Stats every 2000 msgs
+# Or Python-to-Python benchmark
+python3 py/tests/performance/benchmark_master.py eshm1
+python3 py/tests/performance/benchmark_slave.py eshm1 1000
 ```
 
 ### Advanced Examples
@@ -248,10 +249,11 @@ The Python wrapper has minimal overhead:
 - Lock-free reads in the underlying C implementation
 - 1ms heartbeat updates
 
-Typical performance:
-- Latency: ~100-200µs (including Python overhead)
-- Throughput: 100K+ messages/second
-- Perfect for IPC between Python processes or Python↔C/C++
+Actual performance (bidirectional with ACK responses):
+- C++ Master ↔ C++ Slave: ~2.7M msg/sec
+- C++ Master ↔ Python Slave: ~2,700-2,800 msg/sec
+- Python Master ↔ Python Slave: ~2,000-2,400 msg/sec
+- Perfect for high-performance IPC between Python processes or Python↔C/C++
 
 ## Requirements
 

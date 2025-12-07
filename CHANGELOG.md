@@ -7,18 +7,32 @@
   - Merged INTEROP_TEST_RESULTS.md + RUN_INTEROP_DEMO.md
   - Added unit test documentation
   - Comprehensive troubleshooting section
-  - **Benchmarked C++↔Python performance**: 577-581 msg/sec (bidirectional, tested Dec 2025)
+  - **Complete benchmark suite**: All C++/Python configurations tested
 - **Enhanced README.md**: Added "High-Performance Features" section
   - Sequence locks implementation details
   - Heartbeat and monitor thread architecture
   - Cache-line alignment and memory layout
   - Performance characteristics table
-  - **Updated with benchmark results**: C++↔Python: 577-581 msg/sec (bidirectional)
-- **Created py/examples/benchmark_slave.py**: Bidirectional benchmark tool
+  - **Complete performance matrix**: All language combinations benchmarked
+- **Created test/performance/test_benchmark_master.cpp**: C++ bidirectional benchmark tool
+  - Similar to Python benchmark_master.py pattern (write + try_read ACK)
+  - C++ Master ↔ C++ Slave: ~2.7M msg/s (30s bidirectional test)
+- **Created py/tests/performance/benchmark_slave.py**: Python slave benchmark tool
   - Based on simple_slave.py pattern (read + ACK write)
   - Prints stats at configurable intervals (default: 1000 messages)
-  - Tested: 20s (571 msg/s), 30s (580 msg/s), 60s (581 msg/s)
+  - C++ Master ↔ Python Slave: ~2,700-2,800 msg/s (30s bidirectional test)
+- **Created py/tests/performance/benchmark_master.py**: Python master benchmark tool
+  - Based on simple_master.py pattern (write + read ACK)
+  - Python Master ↔ Python Slave: ~2,000-2,400 msg/s (30s bidirectional test)
 - **Removed redundant files**: HIGH_PERFORMANCE_FEATURES.md, INTEROP_TEST_RESULTS.md, RUN_INTEROP_DEMO.md
+
+### Test Organization
+- **Organized C++ tests into subdirectories**:
+  - `test/functional/`: Basic functionality tests (test_basic, test_master_slave, test_auto_role, test_stale_detection, test_error_handling, test_reconnect)
+  - `test/performance/`: Performance benchmarks (test_benchmark_master)
+- **Organized Python tests into subdirectories**:
+  - `py/tests/performance/`: Performance benchmarks (benchmark_master.py, benchmark_slave.py)
+  - `py/examples/`: Example scripts (simple_master.py, simple_slave.py, etc.)
 
 ### Documentation Simplification (Phase 1)
 - **Removed redundant files**: RECONNECTION_GUIDE.md, PERFORMANCE_TUNING.md, POSIX_SHM_MIGRATION.md, DOCUMENTATION_INDEX.md

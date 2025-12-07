@@ -136,15 +136,13 @@ python3 py/examples/benchmark_slave.py eshm1 1000
 
 **Performance Results:**
 
-| Test Duration | Messages | Average Rate | Notes |
-|--------------|----------|--------------|-------|
-| 20 seconds | 11,000 | **571 msg/sec** | Stats every 1000 msgs |
-| 30 seconds | 16,000 | **580 msg/sec** | Stats every 2000 msgs |
-| 60 seconds | 30,000 | **581 msg/sec** | Stats every 5000 msgs |
+| Configuration | Throughput | Test Duration | Tool |
+|--------------|------------|---------------|------|
+| **C++ Master ↔ C++ Slave** | **~2.7M msg/sec** | **30s** | **build/test/test_benchmark_master** |
+| **C++ Master ↔ Python Slave** | **~2,700-2,800 msg/sec** | **30s** | **build/test/test_benchmark_master + py/tests/performance/benchmark_slave.py** |
+| **Python Master ↔ Python Slave** | **~2,000-2,400 msg/sec** | **30s** | **py/tests/performance/benchmark_master.py + benchmark_slave.py** |
 
-**Summary:**
-- **C++ Master → C++ Slave**: 1000 msg/sec
-- **C++ Master ↔ Python Slave**: **577-581 msg/sec**
+All tests use bidirectional communication (read message + send ACK response).
 
 ## Configuration Options
 

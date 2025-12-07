@@ -49,8 +49,9 @@ Or run individual tests:
 ./test/test_master_slave       # Master-slave communication
 ./test/test_auto_role          # Auto role negotiation
 ./test/test_stale_detection    # Stale master detection
-./test/test_performance        # Performance benchmarks
 ./test/test_error_handling     # Error handling tests
+./test/test_reconnect          # Reconnection tests
+./test/test_benchmark_master   # Performance benchmarks
 ```
 
 ## Basic Code Example

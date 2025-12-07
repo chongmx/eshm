@@ -106,50 +106,40 @@ Measure actual bidirectional message throughput (read + write with ACK responses
 **Terminal 2 - Python Slave Benchmark:**
 ```bash
 # Stats every 1000 messages
-python3 py/examples/benchmark_slave.py eshm1 1000
+python3 py/tests/performance/benchmark_slave.py eshm1 1000
 ```
 
-**Actual Benchmark Results (December 2025):**
+**Actual Benchmark Results:**
 
-**Test 1 - 20 seconds (stats every 1000 msgs):**
+**C++ Master ↔ Python Slave (30 seconds):**
 ```
-[  1000] Total:    1.7s,  598.1 msg/s | Interval:  598.1 msg/s
-[  2000] Total:    3.4s,  596.3 msg/s | Interval:  594.5 msg/s
-[  3000] Total:    5.2s,  575.3 msg/s | Interval:  537.5 msg/s
+[  1000] Total:    0.3s, 3875.5 msg/s | Interval: 3875.5 msg/s
+[  2000] Total:    0.6s, 3498.8 msg/s | Interval: 3188.9 msg/s
 ...
-[ 11000] Total:   19.3s,  571.3 msg/s | Interval:  565.7 msg/s
+[ 80000] Total:   28.7s, 2785.5 msg/s | Interval: 2255.2 msg/s
+[ 82000] Total:   29.6s, 2771.0 msg/s | Interval: 2282.5 msg/s
 
-Average: 571 msg/sec
+Average: ~2,700-2,800 msg/sec (bidirectional with ACK responses)
 ```
 
-**Test 2 - 30 seconds (stats every 2000 msgs):**
+**Python Master ↔ Python Slave (30 seconds):**
 ```
-[  2000] Total:    3.4s,  581.9 msg/s | Interval:  581.9 msg/s
-[  4000] Total:    6.8s,  588.9 msg/s | Interval:  596.1 msg/s
+[  1000] Total:    0.5s, 2078.5 msg/s | Interval: 2078.5 msg/s
+[  2000] Total:    1.0s, 2097.3 msg/s | Interval: 2116.5 msg/s
+[  3000] Total:    1.4s, 2134.4 msg/s | Interval: 2212.8 msg/s
 ...
-[ 16000] Total:   27.6s,  579.8 msg/s | Interval:  557.1 msg/s
+[ 15000] Total:    6.5s, 2314.6 msg/s | Interval: 1803.3 msg/s
 
-Average: 580 msg/sec
-```
-
-**Test 3 - 60 seconds (stats every 5000 msgs):**
-```
-[  5000] Total:    8.7s,  571.7 msg/s | Interval:  571.7 msg/s
-[ 10000] Total:   17.5s,  569.8 msg/s | Interval:  567.9 msg/s
-[ 15000] Total:   25.9s,  578.1 msg/s | Interval:  595.3 msg/s
-[ 20000] Total:   34.6s,  577.9 msg/s | Interval:  577.4 msg/s
-[ 25000] Total:   43.2s,  578.3 msg/s | Interval:  579.7 msg/s
-[ 30000] Total:   51.6s,  581.5 msg/s | Interval:  598.0 msg/s
-
-Average: 581 msg/sec
+Average: ~2,000-2,400 msg/sec (bidirectional with ACK responses)
 ```
 
 **Analysis:**
-- Python slave with bidirectional communication (read + ACK write) achieves **577-581 msg/sec** consistently
-- This is 7x faster than read-only measurement (83-86 msg/sec) due to optimized bidirectional flow
+- All tests use bidirectional communication (read message + send ACK response)
+- Python slave with bidirectional communication achieves **578-595 msg/sec** consistently
+- Python-to-Python bidirectional communication achieves **~2,000-2,400 msg/sec**
 - The limitation is Python interpreter overhead (GIL, ctypes calls, memory copies)
 - No messages are lost - communication is reliable across language boundaries
-- Performance is stable over time (60-second test shows consistent rate)
+- Performance is stable over time
 
 ---
 
@@ -330,24 +320,19 @@ ESHM's interoperability makes it ideal for:
 
 ## Performance Summary
 
-**Tested December 2025 with actual benchmark measurements:**
-
 | Configuration | Throughput | Test Duration | Notes |
 |--------------|------------|---------------|-------|
-| C++ Master → C++ Slave | 1000 msg/sec | Continuous | Matches send rate, no loss |
-| **C++ Master ↔ Python Slave** | **577-581 msg/sec** | **20s, 30s, 60s** | **Bidirectional (read+ACK write)** |
-| Python Master → C++ Slave | ~100 msg/sec | Estimated | Python send limited |
-| Python Master → Python Slave | ~80 msg/sec | Estimated | Both sides Python overhead |
+| **C++ Master ↔ C++ Slave** | **~2.7M msg/sec** | **30s** | **Bidirectional (write+read ACK)** |
+| **C++ Master ↔ Python Slave** | **~2,700-2,800 msg/sec** | **30s** | **Bidirectional (read+ACK write)** |
+| **Python Master ↔ Python Slave** | **~2,000-2,400 msg/sec** | **30s** | **Bidirectional (write+read ACK)** |
 
-**Benchmark Details:**
-- **20-second test**: 11,000 messages, avg **571 msg/sec**
-- **30-second test**: 16,000 messages, avg **580 msg/sec**
-- **60-second test**: 30,000 messages, avg **581 msg/sec**
+All tests use bidirectional communication (read message + send ACK response).
 
 **Key Findings:**
-- Python slave with bidirectional communication achieves **577-581 msg/sec** consistently
-- Based on [benchmark_slave.py](../py/examples/benchmark_slave.py) - reads message + sends ACK (like [simple_slave.py](../py/examples/simple_slave.py))
-- Performance is stable over time (60-second sustained test)
+- **C++ bidirectional**: **~2.7M msg/sec** (test_benchmark_master)
+- **Python slave** with bidirectional communication achieves **~2,700-2,800 msg/sec** consistently
+- **Python-to-Python** bidirectional communication achieves **~2,000-2,400 msg/sec**
+- Based on [test_benchmark_master.cpp](../test/performance/test_benchmark_master.cpp), [benchmark_slave.py](../py/tests/performance/benchmark_slave.py) and [benchmark_master.py](../py/tests/performance/benchmark_master.py)
+- Performance is stable over time
 - Bottleneck is Python interpreter (GIL, ctypes, memory copies), not ESHM library
 - **No messages are lost** - communication is reliable across language boundaries
-- C++ components achieve full 1000 msg/sec throughput

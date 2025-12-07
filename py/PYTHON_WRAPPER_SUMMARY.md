@@ -17,7 +17,11 @@ A complete Python wrapper for the ESHM (Enhanced Shared Memory) library has been
 2. **`simple_slave.py`**: Basic slave with reconnection
 3. **`advanced_example.py`**: JSON data, custom timeouts, statistics
 4. **`reconnect_demo.py`**: Demonstrates automatic reconnection
-5. **`performance_test.py`**: Throughput and latency benchmarking
+5. **`standalone_demo.py`**: Standalone example
+
+### Performance Benchmarks (py/tests/performance/)
+1. **`benchmark_master.py`**: Python master benchmark tool
+2. **`benchmark_slave.py`**: Python slave benchmark with statistics
 
 ## Features Implemented
 
@@ -101,13 +105,15 @@ python3 py/examples/reconnect_demo.py master
 # Kill and restart master - slave auto-reconnects!
 ```
 
-### Performance Testing
+### Performance Benchmarking
 ```bash
-# Terminal 1
-python3 py/examples/performance_test.py slave
+# C++ Master + Python Slave
+./build/test/test_benchmark_master master eshm1
+python3 py/tests/performance/benchmark_slave.py eshm1 1000
 
-# Terminal 2
-python3 py/examples/performance_test.py master
+# Python-to-Python
+python3 py/tests/performance/benchmark_master.py eshm1
+python3 py/tests/performance/benchmark_slave.py eshm1 1000
 ```
 
 ## Technical Details
@@ -146,10 +152,11 @@ Python wrapper overhead is minimal:
 - Zero-copy for data transfer
 - Benefits from C++ lock-free implementation
 
-Expected performance:
-- Latency: 100-200µs (includes Python overhead)
-- Throughput: 100K+ messages/second
-- Perfect for IPC between Python processes or Python↔C++
+Actual performance (bidirectional with ACK responses):
+- C++ Master ↔ C++ Slave: ~2.7M msg/sec
+- C++ Master ↔ Python Slave: ~2,700-2,800 msg/sec
+- Python Master ↔ Python Slave: ~2,000-2,400 msg/sec
+- Perfect for high-performance IPC between Python processes or Python↔C++
 
 ## Documentation
 

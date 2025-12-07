@@ -104,7 +104,7 @@ python3 py/examples/advanced_example.py slave
 python3 py/examples/reconnect_demo.py slave
 python3 py/examples/reconnect_demo.py master
 
-# Performance test
-python3 py/examples/performance_test.py slave
-python3 py/examples/performance_test.py master
+# Performance benchmarks
+python3 py/tests/performance/benchmark_slave.py eshm1 1000
+python3 py/tests/performance/benchmark_master.py eshm1
 ```

@@ -21,6 +21,11 @@ target_link_libraries(test_reconnect eshm)
 add_executable(test_benchmark_master performance/test_benchmark_master.cpp)
 target_link_libraries(test_benchmark_master eshm)
 
+# Data Handler tests
+add_executable(test_data_handler functional/test_data_handler.cpp)
+target_link_libraries(test_data_handler eshm_data)
+
 # Add tests
 add_test(NAME BasicTest COMMAND test_basic)
 add_test(NAME ErrorHandlingTest COMMAND test_error_handling)
+add_test(NAME DataHandlerTest COMMAND test_data_handler)

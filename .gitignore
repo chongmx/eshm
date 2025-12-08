@@ -1,2 +1,11 @@
 build/
 py/__pycache__/
+*.pyc
+*.pyo
+*.log
+*.tmp
+*.swp
+*~
+core
+core.*
+.DS_Store

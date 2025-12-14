@@ -199,6 +199,23 @@ class ESHM:
         ]
         lib.eshm_read_ex.restype = ctypes.c_int
 
+        # eshm_read_data (read and decode in one operation)
+        lib.eshm_read_data.argtypes = [
+            ctypes.c_void_p,                    # handle
+            ctypes.POINTER(ctypes.c_uint8),     # out_types
+            ctypes.POINTER(ctypes.c_char_p),    # out_keys
+            ctypes.c_int,                       # max_key_len
+            ctypes.POINTER(ctypes.c_void_p),    # out_values
+            ctypes.c_int,                       # max_items
+            ctypes.POINTER(ctypes.c_int),       # item_count
+            ctypes.c_uint32                     # timeout_ms
+        ]
+        lib.eshm_read_data.restype = ctypes.c_int
+
+        # eshm_free_value (free values returned by eshm_read_data)
+        lib.eshm_free_value.argtypes = [ctypes.c_void_p, ctypes.c_uint8]
+        lib.eshm_free_value.restype = None
+
         # eshm_get_stats
         lib.eshm_get_stats.argtypes = [ctypes.c_void_p, ctypes.POINTER(ESHMStats)]
         lib.eshm_get_stats.restype = ctypes.c_int
@@ -301,6 +318,87 @@ class ESHM:
             return None
         else:
             raise RuntimeError(f"Read failed: {self._error_string(ret)}")
+
+    def read_data(self, timeout_ms: int = 10, max_items: int = 32) -> dict:
+        """
+        Read and decode data in one operation (optimized for performance)
+
+        This method reads raw data from ESHM and decodes it in C++ before
+        returning to Python, avoiding the overhead of Python-side decoding.
+
+        Args:
+            timeout_ms: Timeout in milliseconds
+            max_items: Maximum number of data items expected
+
+        Returns:
+            Dictionary mapping keys to values
+
+        Raises:
+            TimeoutError: If read times out
+            RuntimeError: If read/decode fails
+        """
+        # Allocate output buffers
+        max_key_len = 64
+        out_types = (ctypes.c_uint8 * max_items)()
+        out_keys = (ctypes.c_char_p * max_items)()
+
+        # Pre-allocate key buffers
+        key_buffers = []
+        for i in range(max_items):
+            key_buf = ctypes.create_string_buffer(max_key_len)
+            key_buffers.append(key_buf)
+            out_keys[i] = ctypes.cast(key_buf, ctypes.c_char_p)
+
+        out_values = (ctypes.c_void_p * max_items)()
+        item_count = ctypes.c_int()
+
+        # Call C function
+        ret = ESHM._lib.eshm_read_data(
+            self._handle,
+            out_types,
+            out_keys,
+            max_key_len,
+            out_values,
+            max_items,
+            ctypes.byref(item_count),
+            timeout_ms
+        )
+
+        if ret == ESHMError.TIMEOUT:
+            raise TimeoutError("Read timed out")
+        elif ret != ESHMError.SUCCESS:
+            raise RuntimeError(f"Read data failed: {self._error_string(ret)}")
+
+        # Convert to Python dict
+        result = {}
+        for i in range(item_count.value):
+            key = out_keys[i].decode('utf-8')
+            dtype = out_types[i]
+
+            # Extract value based on type
+            if dtype == 0:  # INTEGER
+                val_ptr = ctypes.cast(out_values[i], ctypes.POINTER(ctypes.c_int64))
+                result[key] = val_ptr[0]
+            elif dtype == 1:  # BOOLEAN
+                val_ptr = ctypes.cast(out_values[i], ctypes.POINTER(ctypes.c_bool))
+                result[key] = bool(val_ptr[0])
+            elif dtype == 2:  # REAL
+                val_ptr = ctypes.cast(out_values[i], ctypes.POINTER(ctypes.c_double))
+                result[key] = val_ptr[0]
+            elif dtype == 3:  # STRING
+                val_ptr = ctypes.cast(out_values[i], ctypes.c_char_p)
+                result[key] = val_ptr.value.decode('utf-8')
+            elif dtype == 4:  # BINARY
+                # Binary data stored as struct { uint8_t* data; size_t len; }
+                class BinaryData(ctypes.Structure):
+                    _fields_ = [("data", ctypes.POINTER(ctypes.c_uint8)), ("len", ctypes.c_size_t)]
+                val_ptr = ctypes.cast(out_values[i], ctypes.POINTER(BinaryData))
+                result[key] = bytes(val_ptr[0].data[:val_ptr[0].len])
+
+            # Free the allocated memory using the C library function
+            ESHM._lib.eshm_free_value(out_values[i], dtype)
+
+        return result
 
     def get_stats(self) -> dict:
         """

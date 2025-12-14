@@ -69,8 +69,9 @@ void run_master(const char* shm_name) {
     config.shm_name = shm_name;
     config.role = ESHM_ROLE_MASTER;
     config.disconnect_behavior = ESHM_DISCONNECT_ON_TIMEOUT;
-    config.stale_threshold_ms = 100;
+    config.stale_threshold_ms = 100;  // 100ms (100 checks at 1kHz)
     config.auto_cleanup = true;
+    config.use_threads = true;  // Enable heartbeat and monitor threads
 
     ESHMHandle* eshm = eshm_init(&config);
     if (!eshm) {
@@ -85,21 +86,8 @@ void run_master(const char* shm_name) {
     int64_t counter = 0;
     auto cycle_start = std::chrono::steady_clock::now();
 
-    std::cout << "Master ready. Waiting for slave to connect...\n";
-
-    // Wait for slave
-    bool slave_alive = false;
-    while (running && !slave_alive) {
-        eshm_check_remote_alive(eshm, &slave_alive);
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-
-    if (!running) {
-        eshm_destroy(eshm);
-        return;
-    }
-
-    std::cout << "Slave connected! Starting data exchange at 1kHz...\n\n";
+    std::cout << "Master ready. Starting data exchange at 1kHz...\n";
+    std::cout << "(Slave will connect when ready)\n\n";
 
     while (running) {
         auto frame_start = std::chrono::steady_clock::now();
@@ -153,6 +141,7 @@ void run_slave(const char* shm_name) {
     config.disconnect_behavior = ESHM_DISCONNECT_ON_TIMEOUT;
     config.stale_threshold_ms = 100;
     config.auto_cleanup = true;
+    config.use_threads = true;  // Enable heartbeat and monitor threads
 
     ESHMHandle* eshm = eshm_init(&config);
     if (!eshm) {

@@ -79,6 +79,33 @@ int eshm_read(ESHMHandle* handle, void* buffer, size_t buffer_size);
 int eshm_read_ex(ESHMHandle* handle, void* buffer, size_t buffer_size,
                  size_t* bytes_read, uint32_t timeout_ms);
 
+// Read and decode data in one operation (for Python optimization)
+// Parameters:
+//   handle: ESHM handle
+//   out_types: output array for DataType values (must be pre-allocated)
+//   out_keys: output array of char* for keys (must be pre-allocated)
+//   max_key_len: maximum length for each key string
+//   out_values: output array of void* for values (will be allocated by function)
+//   max_items: maximum number of items that can be decoded
+//   item_count: pointer to receive actual number of items decoded
+//   timeout_ms: timeout in milliseconds (0 = non-blocking)
+// Returns: ESHM_SUCCESS on success, error code on failure
+// Note: Caller must call eshm_free_value() for each decoded item
+int eshm_read_data(ESHMHandle* handle,
+                   uint8_t* out_types,
+                   char** out_keys,
+                   int max_key_len,
+                   void** out_values,
+                   int max_items,
+                   int* item_count,
+                   uint32_t timeout_ms);
+
+// Free a value returned by eshm_read_data
+// Parameters:
+//   value: pointer to value to free
+//   type: DataType of the value (0=INTEGER, 1=BOOLEAN, 2=REAL, 3=STRING, 4=BINARY)
+void eshm_free_value(void* value, uint8_t type);
+
 // Update heartbeat (called automatically by read/write, but can be called manually)
 // Parameters:
 //   handle: ESHM handle

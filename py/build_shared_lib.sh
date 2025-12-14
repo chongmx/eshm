@@ -11,8 +11,14 @@ echo "Building ESHM shared library for Python..."
 mkdir -p build
 cd build
 
-# Build shared library
-g++ -shared -fPIC -o libeshm.so ../eshm.cpp -pthread -lrt -O3 -Wall -Wextra -std=c++11
+# Build shared library - need C++17 for std::variant in data_handler
+# Include data_handler and asn1 encode/decode for decoding support
+g++ -shared -fPIC -o libeshm.so \
+    ../src/eshm.cpp \
+    ../src/data_handler.cpp \
+    ../src/asn1_encode.cpp \
+    ../src/asn1_decode.cpp \
+    -I../include -pthread -lrt -O3 -Wall -Wextra -std=c++17
 
 echo "Shared library built successfully: build/libeshm.so"
 echo "Python wrapper is ready to use!"

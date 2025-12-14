@@ -1,4 +1,5 @@
 #include "eshm.h"
+#include "data_handler.h"
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -33,7 +34,10 @@ struct ESHMHandle {
     uint64_t last_remote_heartbeat;
     uint64_t stale_counter;
     volatile bool remote_is_stale;
-    
+
+    // Read tracking - remember last write_count we read from
+    uint64_t last_read_write_count;
+
     // Local statistics
     uint64_t last_master_heartbeat;
     uint64_t last_slave_heartbeat;
@@ -187,7 +191,8 @@ static void* monitor_thread_func(void* arg) {
     handle->stale_counter = 0;
     handle->remote_is_stale = false;
 
-    uint32_t check_interval_ms = 10;  // Check every 10ms
+    uint32_t check_interval_ms = 1;  // Check every 1ms (1kHz)
+    bool first_check = true;  // Track first heartbeat check
     uint64_t reconnect_wait_counter = 0;
     uint64_t reconnect_attempt_counter = 0;
     uint32_t reconnect_attempts = 0;  // Count of reconnection attempts
@@ -312,6 +317,13 @@ static void* monitor_thread_func(void* arg) {
             // Get stale threshold from SHM (cache it to prevent accessing NULL later)
             uint32_t stale_threshold = shm_data_snapshot->header.stale_threshold;
 
+            // On first check, initialize last_remote_heartbeat to current value
+            if (first_check) {
+                handle->last_remote_heartbeat = current_remote_heartbeat;
+                first_check = false;
+                fprintf(stderr, "[ESHM] Monitor initialized with remote heartbeat: %lu\n", current_remote_heartbeat);
+            }
+
             // Check if heartbeat changed
             if (current_remote_heartbeat == handle->last_remote_heartbeat) {
                 // Heartbeat didn't change, increment stale counter
@@ -375,6 +387,7 @@ ESHMHandle* eshm_init(const ESHMConfig* config) {
     handle->shm_fd = -1;
     handle->shm_data = NULL;
     handle->threads_running = false;
+    handle->last_read_write_count = 0;  // Initialize read tracking
 
     // Generate POSIX SHM name (e.g., "/eshm_demo")
     generate_shm_name(handle->shm_name, sizeof(handle->shm_name), config->shm_name);
@@ -739,9 +752,15 @@ int eshm_read_timeout(ESHMHandle* handle, void* buffer, size_t buffer_size,
     } else {
         channel = &shm_data_snapshot->master_to_slave;
     }
-    
+
     uint64_t start_time = get_time_ms();
-    uint64_t last_write_count = channel->write_count;
+
+    // Use persistent tracking across calls instead of resetting each time
+    // This ensures we don't miss messages that arrived between calls
+    if (handle->last_read_write_count == 0) {
+        // First read - initialize to current write count
+        handle->last_read_write_count = channel->write_count;
+    }
 
     while (true) {
         // Check if SHM was detached during reconnection (recheck handle->shm_data)
@@ -755,29 +774,32 @@ int eshm_read_timeout(ESHMHandle* handle, void* buffer, size_t buffer_size,
 
         // Check if new data is available
         uint64_t current_write_count = channel->write_count;
-        if (current_write_count > last_write_count) {
+        if (current_write_count > handle->last_read_write_count) {
             // New data available, read with sequence lock
             uint32_t seq;
             do {
                 seq = seqlock_read_begin(&channel->seqlock);
-                
+
                 // Check buffer size
                 if (buffer_size < channel->data_size) {
                     return ESHM_ERROR_BUFFER_TOO_SMALL;
                 }
-                
+
                 // Copy data
                 size_t data_size = channel->data_size;
                 memcpy(buffer, (void*)channel->data, data_size);
-                
+
                 if (bytes_read) {
                     *bytes_read = data_size;
                 }
-                
+
             } while (seqlock_read_retry(&channel->seqlock, seq));
-            
+
             __sync_fetch_and_add(&channel->read_count, 1);
-            
+
+            // Update persistent read tracking to current write count
+            handle->last_read_write_count = current_write_count;
+
             return ESHM_SUCCESS;
         }
         
@@ -910,4 +932,122 @@ const char* eshm_error_string(int error_code) {
         case ESHM_ERROR_ROLE_MISMATCH: return "Role mismatch";
         default: return "Unknown error";
     }
+}
+
+// Read and decode data in one operation (for Python optimization)
+int eshm_read_data(ESHMHandle* handle,
+                   uint8_t* out_types,
+                   char** out_keys,
+                   int max_key_len,
+                   void** out_values,
+                   int max_items,
+                   int* item_count,
+                   uint32_t timeout_ms)
+{
+    if (!handle || !out_types || !out_keys || !out_values || !item_count) {
+        return ESHM_ERROR_INVALID_PARAM;
+    }
+
+    // Read raw data from ESHM
+    uint8_t buffer[ESHM_MAX_DATA_SIZE];
+    size_t bytes_read = 0;
+
+    int ret = eshm_read_timeout(handle, buffer, sizeof(buffer), &bytes_read, timeout_ms);
+    if (ret != ESHM_SUCCESS) {
+        return ret;
+    }
+
+    // Decode using C++ DataHandler
+    try {
+        shm_protocol::DataHandler dh;
+        auto items = dh.decodeDataBuffer(buffer, bytes_read);
+
+        if ((int)items.size() > max_items) {
+            fprintf(stderr, "[ESHM] Too many items: got %zu, max %d\n", items.size(), max_items);
+            return ESHM_ERROR_BUFFER_TOO_SMALL;
+        }
+
+        *item_count = items.size();
+
+        for (size_t i = 0; i < items.size(); i++) {
+            out_types[i] = static_cast<uint8_t>(items[i].type);
+
+            // Copy key
+            strncpy(out_keys[i], items[i].key.c_str(), max_key_len - 1);
+            out_keys[i][max_key_len - 1] = '\0';
+
+            // Allocate and copy value based on type
+            switch (items[i].type) {
+                case shm_protocol::DataType::INTEGER: {
+                    int64_t* val = (int64_t*)malloc(sizeof(int64_t));
+                    if (!val) return ESHM_ERROR_BUFFER_FULL;
+                    *val = std::get<int64_t>(items[i].value);
+                    out_values[i] = val;
+                    break;
+                }
+                case shm_protocol::DataType::BOOLEAN: {
+                    bool* val = (bool*)malloc(sizeof(bool));
+                    if (!val) return ESHM_ERROR_BUFFER_FULL;
+                    *val = std::get<bool>(items[i].value);
+                    out_values[i] = val;
+                    break;
+                }
+                case shm_protocol::DataType::REAL: {
+                    double* val = (double*)malloc(sizeof(double));
+                    if (!val) return ESHM_ERROR_BUFFER_FULL;
+                    *val = std::get<double>(items[i].value);
+                    out_values[i] = val;
+                    break;
+                }
+                case shm_protocol::DataType::STRING: {
+                    const auto& str = std::get<std::string>(items[i].value);
+                    char* val = (char*)malloc(str.size() + 1);
+                    if (!val) return ESHM_ERROR_BUFFER_FULL;
+                    strcpy(val, str.c_str());
+                    out_values[i] = val;
+                    break;
+                }
+                case shm_protocol::DataType::BINARY: {
+                    const auto& bin = std::get<std::vector<uint8_t>>(items[i].value);
+                    // Allocate struct with data pointer and length
+                    struct { uint8_t* data; size_t len; }* val =
+                        (decltype(val))malloc(sizeof(*val));
+                    if (!val) return ESHM_ERROR_BUFFER_FULL;
+                    val->data = (uint8_t*)malloc(bin.size());
+                    if (!val->data) {
+                        free(val);
+                        return ESHM_ERROR_BUFFER_FULL;
+                    }
+                    memcpy(val->data, bin.data(), bin.size());
+                    val->len = bin.size();
+                    out_values[i] = val;
+                    break;
+                }
+                default:
+                    fprintf(stderr, "[ESHM] Unsupported data type: %d\n", (int)items[i].type);
+                    return ESHM_ERROR_INVALID_PARAM;
+            }
+        }
+
+        return ESHM_SUCCESS;
+
+    } catch (const std::exception& e) {
+        fprintf(stderr, "[ESHM] Decode failed: %s\n", e.what());
+        return ESHM_ERROR_INVALID_PARAM;
+    }
+}
+
+// Free a value returned by eshm_read_data
+void eshm_free_value(void* value, uint8_t type) {
+    if (!value) return;
+
+    if (type == 4) {  // BINARY type needs special handling
+        // Binary data is stored as struct { uint8_t* data; size_t len; }
+        struct BinaryData { uint8_t* data; size_t len; };
+        BinaryData* bin = static_cast<BinaryData*>(value);
+        if (bin->data) {
+            free(bin->data);
+        }
+    }
+    free(value);
 }

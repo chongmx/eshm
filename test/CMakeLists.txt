@@ -29,3 +29,6 @@ target_link_libraries(test_data_handler eshm_data)
 add_test(NAME BasicTest COMMAND test_basic)
 add_test(NAME ErrorHandlingTest COMMAND test_error_handling)
 add_test(NAME DataHandlerTest COMMAND test_data_handler)
+
+# Image transfer test (requires large ESHM_MAX_DATA_SIZE)
+add_subdirectory(image_transfer)

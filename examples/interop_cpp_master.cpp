@@ -35,8 +35,7 @@ int main(int argc, char* argv[]) {
     std::cout << "========================================\n\n";
 
     // Initialize ESHM
-    ESHMConfig config = {0};
-    config.shm_name = shm_name;
+    ESHMConfig config = eshm_default_config(shm_name);
     config.role = ESHM_ROLE_MASTER;
     config.disconnect_behavior = ESHM_DISCONNECT_ON_TIMEOUT;
     config.stale_threshold_ms = 100;

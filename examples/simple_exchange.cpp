@@ -65,8 +65,7 @@ struct Statistics {
 void run_master(const char* shm_name) {
     std::cout << "Starting MASTER mode\n";
 
-    ESHMConfig config = {0};
-    config.shm_name = shm_name;
+    ESHMConfig config = eshm_default_config(shm_name);
     config.role = ESHM_ROLE_MASTER;
     config.disconnect_behavior = ESHM_DISCONNECT_ON_TIMEOUT;
     config.stale_threshold_ms = 100;  // 100ms (100 checks at 1kHz)
@@ -84,7 +83,7 @@ void run_master(const char* shm_name) {
     signal(SIGTERM, signal_handler);
 
     int64_t counter = 0;
-    auto cycle_start = std::chrono::steady_clock::now();
+    // auto cycle_start = std::chrono::steady_clock::now();  // Unused
 
     std::cout << "Master ready. Starting data exchange at 1kHz...\n";
     std::cout << "(Slave will connect when ready)\n\n";
@@ -135,8 +134,7 @@ void run_master(const char* shm_name) {
 void run_slave(const char* shm_name) {
     std::cout << "Starting SLAVE mode\n";
 
-    ESHMConfig config = {0};
-    config.shm_name = shm_name;
+    ESHMConfig config = eshm_default_config(shm_name);
     config.role = ESHM_ROLE_SLAVE;
     config.disconnect_behavior = ESHM_DISCONNECT_ON_TIMEOUT;
     config.stale_threshold_ms = 100;

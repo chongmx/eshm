@@ -79,7 +79,7 @@ int64_t DERDecoder::decodeInteger() {
     // Handle negative values (two's complement)
     if (negative && length < 8) {
         // Sign extend
-        int64_t sign_extend = static_cast<int64_t>(-1) << (length * 8);
+        int64_t sign_extend = static_cast<int64_t>(~0ULL << (length * 8));
         value |= sign_extend;
     }
     
@@ -185,7 +185,7 @@ double DERDecoder::decodeReal() {
         }
 
         if (exp_negative && exp_len < 8) {
-            int64_t sign_extend = static_cast<int64_t>(-1) << (exp_len * 8);
+            int64_t sign_extend = static_cast<int64_t>(~0ULL << (exp_len * 8));
             exponent |= sign_extend;
         }
 

@@ -2,6 +2,8 @@
 
 A high-performance, production-ready shared memory IPC library for Linux with master-slave architecture, automatic reconnection, and lock-free communication using POSIX shared memory.
 
+**Ready for integration:** ESHM is designed to be easily included as a git submodule in your project's `3rdparty/` directory, with automatic CMake configuration and shared library (.so) builds.
+
 ## Features
 
 - **Master-Slave Architecture**: Automatic role negotiation with master takeover on restart
@@ -16,15 +18,118 @@ A high-performance, production-ready shared memory IPC library for Linux with ma
 - **Bidirectional Channels**: Separate master→slave and slave→master channels
 - **Python Support**: Full Python wrapper with C++ interoperability
 
+## Integration into Your Project
+
+ESHM can be integrated into your project in three ways:
+
+### Option 1: Git Submodule (Recommended)
+
+Add ESHM as a git submodule in your project's `3rdparty/` or `external/` directory:
+
+```bash
+# Add ESHM as a submodule
+cd your_project/
+git submodule add https://github.com/yourusername/eshm.git 3rdparty/eshm
+git submodule update --init --recursive
+```
+
+In your project's `CMakeLists.txt`:
+
+```cmake
+# Add ESHM subdirectory
+add_subdirectory(3rdparty/eshm)
+
+# Link your target to ESHM
+add_executable(your_app main.cpp)
+target_link_libraries(your_app PRIVATE ESHM::eshm)
+```
+
+When ESHM is included as a subdirectory, tests and examples are automatically disabled.
+
+### Option 2: System Installation
+
+Install ESHM system-wide:
+
+```bash
+# Build and install
+mkdir build && cd build
+cmake -DCMAKE_INSTALL_PREFIX=/usr/local ..
+make
+sudo make install
+```
+
+In your project's `CMakeLists.txt`:
+
+```cmake
+# Find ESHM package
+find_package(ESHM 1.0 REQUIRED)
+
+# Link your target
+add_executable(your_app main.cpp)
+target_link_libraries(your_app PRIVATE ESHM::eshm)
+```
+
+### Option 3: Manual Integration
+
+Copy the necessary files into your project:
+
+```bash
+# Copy headers
+cp include/*.h your_project/include/
+
+# Copy source files
+cp src/*.cpp your_project/src/
+
+# Add to your CMakeLists.txt (build both libraries)
+add_library(eshm_data SHARED
+    src/asn1_encode.cpp src/asn1_decode.cpp src/data_handler.cpp)
+add_library(eshm SHARED src/eshm.cpp)
+target_link_libraries(eshm PUBLIC eshm_data pthread rt)
+```
+
 ## Quick Start
 
-### Build
+### Build Standalone
 
 ```bash
 mkdir build && cd build
 cmake ..
 make
 ```
+
+This builds:
+- `libeshm.so` and `libeshm_data.so` - Shared libraries
+- `eshm_demo` - Demo application in [demo/main.cpp](demo/main.cpp)
+- Tests and examples (in `test/` and `examples/`)
+
+### Build Options
+
+Control what gets built:
+
+```bash
+cmake -DESHM_BUILD_TESTS=OFF \       # Skip tests
+      -DESHM_BUILD_EXAMPLES=OFF \    # Skip examples
+      -DESHM_BUILD_DEMO=OFF \        # Skip demo
+      ..
+```
+
+### Memory Layout Customization
+
+Customize the memory layout for your specific needs:
+
+```bash
+# Larger channel data size for bigger messages
+cmake -DESHM_MAX_DATA_SIZE=8192 ..
+
+# Different heartbeat interval
+cmake -DESHM_HEARTBEAT_INTERVAL_MS=5 ..
+
+# Default values (if not specified):
+# - ESHM_MAX_DATA_SIZE: 4096 bytes
+# - ESHM_HEARTBEAT_INTERVAL_MS: 1 ms
+```
+
+These settings are baked into the library at compile time via the generated `eshm_config.h` header.
 
 ### Basic C++ Usage
 
@@ -89,6 +194,62 @@ config.reconnect_retry_interval_ms = 100;  // Retry every 100ms
 3. **Automatic Retry**: Slave detaches from old SHM and retries connection
 4. **Transparent Resumption**: Once master restarts, slave reconnects and communication resumes
 
+## Complete Integration Example
+
+Here's a minimal example showing how to use ESHM in your project:
+
+**your_project/CMakeLists.txt:**
+```cmake
+cmake_minimum_required(VERSION 3.10)
+project(MyApp)
+
+set(CMAKE_CXX_STANDARD 17)
+
+# Add ESHM as subdirectory
+add_subdirectory(3rdparty/eshm)
+
+# Create your application
+add_executable(my_app main.cpp)
+target_link_libraries(my_app PRIVATE ESHM::eshm)
+```
+
+**your_project/main.cpp:**
+```cpp
+#include <eshm.h>
+#include <stdio.h>
+
+int main() {
+    // Initialize as master
+    ESHMConfig config = eshm_default_config("my_shm");
+    config.role = ESHM_ROLE_MASTER;
+    ESHMHandle* handle = eshm_init(&config);
+
+    // Write data
+    const char* msg = "Hello from ESHM!";
+    eshm_write(handle, msg, strlen(msg) + 1);
+
+    // Read response
+    char buffer[256];
+    int bytes = eshm_read(handle, buffer, sizeof(buffer));
+    if (bytes > 0) {
+        printf("Received: %s\n", buffer);
+    }
+
+    eshm_destroy(handle);
+    return 0;
+}
+```
+
+**Build your project:**
+```bash
+cd your_project
+git submodule add <eshm-repo-url> 3rdparty/eshm
+mkdir build && cd build
+cmake ..
+make
+./my_app
+```
+
 ## Performance Testing
 
 ### C++ Demo (1000 msg/sec)
@@ -101,7 +262,7 @@ config.reconnect_retry_interval_ms = 100;  // Retry every 100ms
 ./build/eshm_demo slave eshm1
 ```
 
-**Tune performance** by editing `main.cpp`:
+**Tune performance** by editing [demo/main.cpp](demo/main.cpp):
 ```cpp
 #define MESSAGE_INTERVAL_US 1000        // 1ms = 1000 msg/sec
 #define MESSAGE_INTERVAL_US 100         // 0.1ms = 10,000 msg/sec
@@ -209,7 +370,7 @@ do {
 - CPU overhead: <0.1% per process
 - Enables precise stale detection
 
-**Code location:** [eshm.cpp:155](eshm.cpp#L155)
+**Code location:** [src/eshm.cpp:155](src/eshm.cpp#L155)
 
 ### 3. Counter-Based Stale Detection
 
@@ -239,9 +400,9 @@ do {
 - Separate cache lines for master/slave data
 - Optimal CPU cache performance
 
-**Memory layout:**
+**Memory layout (default configuration):**
 ```
-ESHMData (8576 bytes):
+ESHMData (~8.5 KB with default ESHM_MAX_DATA_SIZE=4096):
 ├── ESHMHeader (64 bytes aligned)
 │   ├── master_heartbeat (atomic counter)
 │   ├── slave_heartbeat (atomic counter)
@@ -249,14 +410,16 @@ ESHMData (8576 bytes):
 │
 ├── master_to_slave Channel (64 bytes aligned)
 │   ├── seqlock (sequence number)
-│   ├── data[4096]
+│   ├── data[ESHM_MAX_DATA_SIZE] (default: 4096 bytes)
 │   └── write_count, read_count
 │
 └── slave_to_master Channel (64 bytes aligned)
     ├── seqlock (sequence number)
-    ├── data[4096]
+    ├── data[ESHM_MAX_DATA_SIZE] (default: 4096 bytes)
     └── write_count, read_count
 ```
+
+**Note:** Memory layout is customizable via `ESHM_MAX_DATA_SIZE`. See [Memory Layout Customization](#memory-layout-customization).
 
 ### Performance Characteristics
 
@@ -322,22 +485,38 @@ while (running) {
 ## Project Structure
 
 ```
-testESHM/
-├── eshm.h              # Public API
-├── eshm.cpp            # Implementation
-├── eshm_data.h         # Data structures
-├── main.cpp            # Demo application (1000 msg/sec)
-├── test/               # Unit and integration tests
-├── py/                 # Python wrapper and examples
-│   ├── eshm.py         # Python bindings
+eshm/
+├── include/                # Public headers
+│   ├── eshm.h              # Core ESHM API
+│   ├── eshm_data.h         # Data structures
+│   ├── data_handler.h      # ASN.1 data handler
+│   ├── asn1_der.h          # ASN.1 encoder/decoder
+│   └── eshm_config.h.in    # Configuration template (generates eshm_config.h)
+├── src/                    # Implementation files
+│   ├── eshm.cpp            # Core ESHM implementation
+│   ├── data_handler.cpp
+│   ├── asn1_encode.cpp
+│   └── asn1_decode.cpp
+├── demo/                   # Demo application
+│   └── main.cpp            # Example usage (1000 msg/sec)
+├── test/                   # Unit and integration tests
+│   ├── functional/         # Functional tests
+│   ├── performance/        # Performance benchmarks
+│   └── image_transfer/     # 4K image transfer tests
+├── examples/               # Additional examples
+├── py/                     # Python wrapper
+│   ├── eshm.py             # Python bindings
 │   ├── build_shared_lib.sh
 │   └── examples/
-│       ├── simple_master.py
-│       ├── simple_slave.py
-│       └── performance_test.py  # Configurable stats
-└── docs/
-    ├── QUICK_START.md
-    └── TEST.md             # C++↔Python interop testing guide
+├── cmake/                  # CMake configuration files
+│   └── ESHMConfig.cmake.in
+├── docs/                   # Documentation
+│   ├── INTEGRATION_GUIDE.md
+│   ├── MEMORY_LAYOUT.md
+│   ├── QUICK_START.md
+│   ├── TEST.md
+│   └── examples/client_integration/
+└── CMakeLists.txt          # Build configuration
 ```
 
 ## Running Tests
@@ -357,8 +536,53 @@ cd build
 ./test/test_performance
 ```
 
+### Large Data Transfer Test (4K Images)
+
+Test ESHM with large data by transferring 4K resolution images:
+
+```bash
+# Build with 64 MB channels (for dual 4K frames)
+rm -rf build && mkdir build && cd build
+cmake -DESHM_MAX_DATA_SIZE=67108864 ..
+make
+
+# Terminal 1: Start sender
+./test/image_transfer/dual_frame_sender
+
+# Terminal 2: Start receiver
+./test/image_transfer/dual_frame_receiver
+```
+
+**Results:** Transfers two 4K RGBA frames (63 MB) in ~15 ms at 4+ GB/s
+
+See [test/image_transfer/README.md](test/image_transfer/README.md) for details.
+
+## Library Information
+
+**Version:** 1.0.0
+
+**Shared Libraries:**
+- `libeshm.so.1.0.0` - Core ESHM library (~155 KB with default 4KB channels)
+- `libeshm_data.so.1.0.0` - ASN.1 data handler library (~920 KB)
+
+**Versioning:**
+- SOVERSION: 1 (binary compatibility within major version)
+- Full version: 1.0.0 (follows semantic versioning)
+
+**CMake Namespace:** `ESHM::`
+- Link with `ESHM::eshm` to get both core and data libraries
+
+**Memory Layout:**
+- Default channel size: 4096 bytes (customizable via `ESHM_MAX_DATA_SIZE`)
+- Default heartbeat interval: 1 ms (customizable via `ESHM_HEARTBEAT_INTERVAL_MS`)
+- Configuration is compile-time via CMake options
+
 ## Documentation
 
+- **[Integration Guide](docs/INTEGRATION_GUIDE.md)** - **Start here!** Complete guide for integrating ESHM into your project
+- [Memory Layout Guide](docs/MEMORY_LAYOUT.md) - Detailed guide to memory layout customization
+- [Client Integration Example](docs/examples/client_integration/) - Working example with master/slave applications
+- [4K Image Transfer Test](test/image_transfer/README.md) - Large data transfer examples
 - [Quick Start Guide](docs/QUICK_START.md) - Getting started tutorial
 - [Testing Guide](docs/TEST.md) - C++↔Python interoperability and unit tests
 - [Python README](py/README.md) - Complete Python documentation
@@ -386,7 +610,7 @@ cd build
 
 - Linux with POSIX shared memory support
 - CMake 3.10+
-- C++11 compiler
+- C++17 compiler (GCC 7+, Clang 5+)
 - pthread and rt libraries
 
 ## License

@@ -4,11 +4,11 @@
 #include <stdint.h>
 #include <sys/types.h>
 #include <pthread.h>
+#include "eshm_config.h"
 
 #define ESHM_MAGIC 0x4553484D  // "ESHM"
 #define ESHM_VERSION 2
-#define ESHM_MAX_DATA_SIZE 4096
-#define ESHM_HEARTBEAT_INTERVAL_MS 1  // 1ms heartbeat update
+/* ESHM_MAX_DATA_SIZE and ESHM_HEARTBEAT_INTERVAL_MS are now defined in eshm_config.h */
 
 // Channel states
 enum ESHMChannelState {

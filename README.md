@@ -334,7 +334,7 @@ ESHM supports seamless interoperability between C++ and Python processes using t
 python3 py/examples/simple_slave.py eshm1
 ```
 
-See [docs/TEST.md](docs/TEST.md) for comprehensive testing guide.
+See [test/TEST.md](test/TEST.md) for comprehensive testing guide.
 
 ## High-Performance Features
 
@@ -502,8 +502,11 @@ eshm/
 ├── test/                   # Unit and integration tests
 │   ├── functional/         # Functional tests
 │   ├── performance/        # Performance benchmarks
-│   └── image_transfer/     # 4K image transfer tests
+│   ├── image_transfer/     # 4K image transfer tests
+│   └── TEST.md             # Testing guide
 ├── examples/               # Additional examples
+│   ├── client_integration/ # Example client project integration
+│   └── README.md           # Examples documentation
 ├── py/                     # Python wrapper
 │   ├── eshm.py             # Python bindings
 │   ├── build_shared_lib.sh
@@ -513,9 +516,7 @@ eshm/
 ├── docs/                   # Documentation
 │   ├── INTEGRATION_GUIDE.md
 │   ├── MEMORY_LAYOUT.md
-│   ├── QUICK_START.md
-│   ├── TEST.md
-│   └── examples/client_integration/
+│   └── QUICK_START.md
 └── CMakeLists.txt          # Build configuration
 ```
 
@@ -581,10 +582,11 @@ See [test/image_transfer/README.md](test/image_transfer/README.md) for details.
 
 - **[Integration Guide](docs/INTEGRATION_GUIDE.md)** - **Start here!** Complete guide for integrating ESHM into your project
 - [Memory Layout Guide](docs/MEMORY_LAYOUT.md) - Detailed guide to memory layout customization
-- [Client Integration Example](docs/examples/client_integration/) - Working example with master/slave applications
+- [Client Integration Example](examples/client_integration/) - Working example with master/slave applications
+- [Examples Guide](examples/README.md) - Overview of all examples
 - [4K Image Transfer Test](test/image_transfer/README.md) - Large data transfer examples
 - [Quick Start Guide](docs/QUICK_START.md) - Getting started tutorial
-- [Testing Guide](docs/TEST.md) - C++↔Python interoperability and unit tests
+- [Testing Guide](test/TEST.md) - C++↔Python interoperability and unit tests
 - [Python README](py/README.md) - Complete Python documentation
 - [Changelog](CHANGELOG.md) - Recent improvements
 

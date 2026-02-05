@@ -31,7 +31,7 @@ int main() {
     while (g_running) {
         char buffer[256];
         size_t bytes_read;
-        int ret = eshm_read_timeout(handle, buffer, sizeof(buffer), &bytes_read, 1000);
+        int ret = eshm_read_ex(handle, buffer, sizeof(buffer), &bytes_read, 1000);
         if (ret == ESHM_SUCCESS) {
             printf("[SLAVE] Received: %s\n", buffer);
         }

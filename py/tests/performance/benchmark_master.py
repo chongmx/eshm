@@ -2,7 +2,7 @@
 """
 ESHM Benchmark Master - Performance Testing
 
-Based on simple_master.py but optimized for benchmarking:
+Based on the publisher in examples/01_hello_channel but optimized for benchmarking:
 - Sends messages continuously at maximum rate
 - Prints stats only every N messages (default: 1000)
 - Measures actual message send rate

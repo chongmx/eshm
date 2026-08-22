@@ -294,10 +294,16 @@ class DERDecoder:
         return bytes(data)
 
     def begin_sequence(self) -> int:
-        """Begin SEQUENCE, returns end position"""
+        """Begin SEQUENCE, returns end position
+
+        Compare only the tag number (low 5 bits), the way DERDecoder does in
+        src/asn1_decode.cpp. The C++ encoder sets the constructed bit and emits
+        0x30; this encoder emits a bare 0x10. Both have to decode here or the
+        C++ -> Python direction cannot read anything.
+        """
         tag = self.decode_tag()
-        if tag != Tag.SEQUENCE:
-            raise ValueError(f"Expected SEQUENCE tag, got {tag}")
+        if (tag & 0x1F) != Tag.SEQUENCE:
+            raise ValueError(f"Expected SEQUENCE tag, got {tag:#04x}")
 
         length = self.decode_length()
         end_pos = self.pos + length

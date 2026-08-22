@@ -296,30 +296,33 @@ make
 #define MESSAGE_INTERVAL_US 10000       // 10ms = 100 msg/sec
 ```
 
-### Python Performance Test
+### Round-Trip Benchmark (any language pairing)
+
+[examples/08_benchmark/](examples/08_benchmark/) measures complete round trips,
+in whichever combination you start:
 
 ```bash
-# Build Python wrapper first
-cd py && ./build_shared_lib.sh && cd ..
-
-# Terminal 1 - Python master
-python3 py/examples/performance_test.py master
-
-# Terminal 2 - Python slave (stats every 10000 messages by default)
-python3 py/examples/performance_test.py slave
-
-# Custom stats interval (every 2000 messages)
-python3 py/examples/performance_test.py slave perf_test 2000
+# Terminal 1                                  # Terminal 2
+./build/examples/08_benchmark/bench echo demo
+./build/examples/08_benchmark/bench drive demo --seconds 5     # C++ -> C++
+python3 examples/08_benchmark/bench.py drive demo --seconds 5  # Python -> C++
 ```
 
-### C++ ↔ Python Interop Benchmark
+It also compares the two Python codec paths, which is the choice that usually
+matters most:
 
 ```bash
-# Terminal 1 - C++ master (1000 msg/sec)
-./build/eshm_demo master eshm1
+python3 examples/08_benchmark/bench.py codec --records 20000
+```
+
+### Fixed-Rate Interop Benchmark
+
+```bash
+# Terminal 1 - C++ benchmark master
+./build/test/test_benchmark_master master eshm1
 
 # Terminal 2 - Python slave (benchmarking with ACK responses)
-python3 py/examples/benchmark_slave.py eshm1 1000
+python3 py/tests/performance/benchmark_slave.py eshm1 1000
 ```
 
 **Performance Results:**
@@ -354,14 +357,16 @@ ESHM supports seamless interoperability between C++ and Python processes using t
 
 **Example:**
 ```bash
-# C++ master
-./build/eshm_demo master eshm1
+# C++ publisher
+./build/examples/01_hello_channel/hello_publisher eshm1
 
-# Python slave (in another terminal)
-python3 py/examples/simple_slave.py eshm1
+# Python consumer (in another terminal)
+python3 examples/01_hello_channel/peer.py consume eshm1
 ```
 
-See [test/TEST.md](test/TEST.md) for comprehensive testing guide.
+Every example in [examples/](examples/) ships both sides and works in either
+direction; `./examples/run_all.sh` checks all of them. See
+[test/TEST.md](test/TEST.md) for the test suite.
 
 ## High-Performance Features
 
@@ -531,13 +536,22 @@ eshm/
 │   ├── performance/        # Performance benchmarks
 │   ├── image_transfer/     # 4K image transfer tests
 │   └── TEST.md             # Testing guide
-├── examples/               # Additional examples
-│   ├── client_integration/ # Example client project integration
-│   └── README.md           # Examples documentation
+├── examples/               # Worked examples: each a C++ / Python pair
+│   ├── 01_hello_channel/   # Core read/write API
+│   ├── 02_structured_data/ # ASN.1 records across languages
+│   ├── 03_c_api/           # The ABI-stable C surface
+│   ├── 04_monitoring/      # Statistics, roles, liveness
+│   ├── 05_reconnection/    # Surviving a master restart
+│   ├── 06_large_payload/   # Payloads bigger than the channel
+│   ├── 07_rich_types/      # Event / FunctionCall / ImageFrame (C++ only)
+│   ├── 08_benchmark/       # Round-trip throughput
+│   ├── 09_integration/     # Consuming ESHM from your own project
+│   ├── run_all.sh          # Smoke-tests every pairing
+│   └── README.md           # Index and API coverage map
 ├── py/                     # Python wrapper
 │   ├── eshm.py             # Python bindings
 │   ├── build_shared_lib.sh
-│   └── examples/
+│   └── tests/
 ├── cmake/                  # CMake configuration files
 │   └── ESHMConfig.cmake.in
 ├── docs/                   # Documentation
@@ -609,7 +623,7 @@ See [test/image_transfer/README.md](test/image_transfer/README.md) for details.
 
 - **[Integration Guide](docs/INTEGRATION_GUIDE.md)** - **Start here!** Complete guide for integrating ESHM into your project
 - [Memory Layout Guide](docs/MEMORY_LAYOUT.md) - Detailed guide to memory layout customization
-- [Client Integration Example](examples/client_integration/) - Working example with master/slave applications
+- [Integration Example](examples/09_integration/) - Working example with master/slave applications
 - [Examples Guide](examples/README.md) - Overview of all examples
 - [4K Image Transfer Test](test/image_transfer/README.md) - Large data transfer examples
 - [Quick Start Guide](docs/QUICK_START.md) - Getting started tutorial
@@ -672,11 +686,13 @@ dh_destroy(h);
 
 ## Examples
 
-- [examples/getting_started/](examples/getting_started/) - publisher/consumer pair
-  built with `find_package(ESHM)`; copy the directory into your own project
-- [py/examples/getting_started.py](py/examples/getting_started.py) - the same
-  pair in Python; either side pairs with the C++ one
-- [examples/](examples/) - simple API, DataHandler and interop demos
+- [examples/01_hello_channel/](examples/01_hello_channel/) - publisher/consumer
+  pair plus a Python `peer.py`; every combination of the two works, and the
+  directory builds standalone with `find_package(ESHM)` so you can copy it into
+  your own project
+- [examples/](examples/) - nine numbered examples covering the whole API, each
+  with a C++ side and a Python side that talk to each other
+- `./examples/run_all.sh` checks every C++/Python pairing in both directions
 - `ctest --test-dir build` runs the suite; `test_selftest` alone verifies a
   full master/slave round trip in one command
 

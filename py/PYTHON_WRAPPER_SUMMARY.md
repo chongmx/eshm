@@ -12,12 +12,18 @@ A complete Python wrapper for the ESHM (Enhanced Shared Memory) library has been
 - **`py/build_shared_lib.sh`**: Build script for creating `libeshm.so`
 - **`py/README.md`**: Complete Python wrapper documentation
 
-### Examples (py/examples/)
-1. **`simple_master.py`**: Basic master example
-2. **`simple_slave.py`**: Basic slave with reconnection
-3. **`advanced_example.py`**: JSON data, custom timeouts, statistics
-4. **`reconnect_demo.py`**: Demonstrates automatic reconnection
-5. **`standalone_demo.py`**: Standalone example
+### Examples (examples/)
+Examples live beside the C++ programs they pair with, in the top-level
+`examples/` directory. Each numbered directory carries a `peer.py`:
+
+1. **`01_hello_channel/peer.py`**: publish/consume - the core API
+2. **`02_structured_data/peer.py`**: ASN.1 records, pure-Python codec
+3. **`03_c_api/peer.py`**: the same records with the codec in C++
+4. **`04_monitoring/peer.py`**: statistics, roles, liveness
+5. **`05_reconnection/peer.py`**: reconnect policy and master restarts
+6. **`06_large_payload/peer.py`**: payloads larger than the channel
+7. **`08_benchmark/bench.py`**: throughput and codec comparison
+8. **`09_integration/peer.py`**: attaching to an integrated C++ application
 
 ### Performance Benchmarks (py/tests/performance/)
 1. **`benchmark_master.py`**: Python master benchmark tool
@@ -88,19 +94,19 @@ This compiles `eshm.cpp` as a shared library that Python can load via ctypes.
 ### Basic Communication
 ```bash
 # Terminal 1
-python3 py/examples/simple_master.py
+python3 examples/01_hello_channel/peer.py publish
 
 # Terminal 2
-python3 py/examples/simple_slave.py
+python3 examples/01_hello_channel/peer.py consume
 ```
 
 ### Reconnection Demo
 ```bash
 # Terminal 1 - Slave first
-python3 py/examples/reconnect_demo.py slave
+python3 examples/05_reconnection/peer.py consume --attempts 0 --wait 0
 
 # Terminal 2 - Master
-python3 py/examples/reconnect_demo.py master
+python3 examples/05_reconnection/peer.py publish
 
 # Kill and restart master - slave auto-reconnects!
 ```

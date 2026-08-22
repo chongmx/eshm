@@ -147,31 +147,49 @@ class ESHMDisconnectBehavior(IntEnum):
 
 ## Examples
 
-See the `examples/` directory for complete examples:
+Every example lives in the top-level [`examples/`](../examples/) directory,
+next to the C++ program it pairs with — each numbered directory has a `peer.py`
+that talks to the C++ side in both directions.
 
-### Basic Examples
-- `simple_master.py` - Basic master that sends messages (default SHM: "eshm1")
-- `simple_slave.py` - Basic slave that receives and responds (default SHM: "eshm1")
-- **Note**: Now includes null terminators for C++ compatibility
+| Directory | Python entry point | Shows |
+|---|---|---|
+| [01_hello_channel](../examples/01_hello_channel/) | `peer.py publish\|consume` | `write`, `read`, `try_read`, roles, NUL handling |
+| [02_structured_data](../examples/02_structured_data/) | `peer.py send\|receive` | `DataHandler`, the pure-Python DER codec |
+| [03_c_api](../examples/03_c_api/) | `peer.py write\|read` | `ESHMData`, the codec done in C++ |
+| [04_monitoring](../examples/04_monitoring/) | `peer.py generate\|watch` | `get_stats`, `get_role`, `is_remote_alive` |
+| [05_reconnection](../examples/05_reconnection/) | `peer.py publish\|consume` | reconnect policy, `ESHMRole.AUTO` |
+| [06_large_payload](../examples/06_large_payload/) | `peer.py send\|receive` | payloads larger than the channel |
+| [08_benchmark](../examples/08_benchmark/) | `bench.py drive\|echo\|codec` | throughput, and which codec to use |
+| [09_integration](../examples/09_integration/) | `peer.py master\|slave` | attaching to an integrated C++ app |
 
-Run them:
+Run any of them against its C++ counterpart:
+
 ```bash
-# Terminal 1 - Python master (or use C++ master: ./build/eshm_demo master eshm1)
-python3 py/examples/simple_master.py
+cmake -S . -B build && cmake --build build -j$(nproc)
+export PYTHONPATH=$PWD/py ESHM_LIB=$PWD/build/libeshm.so
 
-# Terminal 2 - Python slave
-python3 py/examples/simple_slave.py
-
-# With custom SHM name
-python3 py/examples/simple_master.py my_shm
-python3 py/examples/simple_slave.py my_shm
+# Terminal 1                                        # Terminal 2
+./build/examples/01_hello_channel/hello_publisher demo
+python3 examples/01_hello_channel/peer.py consume demo
 ```
 
-### Performance Benchmarks
-- `benchmark_master.py` - Python master benchmark (in tests/performance/)
-- `benchmark_slave.py` - Python slave benchmark with statistics (in tests/performance/)
+Or check every pairing at once:
 
-Run performance benchmarks:
+```bash
+./examples/run_all.sh
+```
+
+### Performance benchmarks
+
+The example benchmark covers round-trip rate and the codec comparison:
+
+```bash
+python3 examples/08_benchmark/bench.py drive demo --seconds 5   # with ./bench echo
+python3 examples/08_benchmark/bench.py codec --records 20000    # pure vs native codec
+```
+
+The older fixed-rate benchmark tools remain under `py/tests/performance/`:
+
 ```bash
 # Terminal 1 - C++ benchmark master (unlimited rate)
 ./build/test/test_benchmark_master master eshm1
@@ -179,34 +197,9 @@ Run performance benchmarks:
 # Terminal 2 - Python slave benchmark (stats every 1000 messages)
 python3 py/tests/performance/benchmark_slave.py eshm1 1000
 
-# Or Python-to-Python benchmark
+# Or Python-to-Python
 python3 py/tests/performance/benchmark_master.py eshm1
 python3 py/tests/performance/benchmark_slave.py eshm1 1000
-```
-
-### Advanced Examples
-- `advanced_example.py` - JSON data, custom timeouts, statistics
-- `reconnect_demo.py` - Automatic reconnection demonstration
-
-Run advanced example:
-```bash
-# Terminal 1
-python3 py/examples/advanced_example.py master
-
-# Terminal 2
-python3 py/examples/advanced_example.py slave
-```
-
-Run reconnect demo:
-```bash
-# Terminal 1 - Start slave first
-python3 py/examples/reconnect_demo.py slave
-
-# Terminal 2 - Start master
-python3 py/examples/reconnect_demo.py master
-
-# Kill master with Ctrl+C or kill -9, then restart it
-# The slave will automatically reconnect!
 ```
 
 ## Error Handling

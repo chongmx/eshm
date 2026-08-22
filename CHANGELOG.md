@@ -1,5 +1,69 @@
 # ESHM Changelog
 
+## Unreleased - Examples reorganised, C++/Python interop fixed
+
+### Fixed
+- **C++ -> Python DER decoding never worked.** `DEREncoder` in C++ emits the
+  SEQUENCE tag as `0x30` (constructed bit set, correct DER) while the Python
+  decoder compared against a bare `0x10` and rejected it, so every buffer a C++
+  peer encoded failed to decode in Python. `py/data_handler.py` now compares
+  only the tag number (`tag & 0x1F`), the way `DERDecoder` in
+  `src/asn1_decode.cpp` always has. The Python *encoder* is unchanged, so the
+  wire format is untouched and no existing peer is affected.
+- **Reconnection delivered no data.** On a successful reattach the monitor
+  thread reset every counter except `last_read_write_count`, which still held
+  the dead master's final write count. Because the new master's channel starts
+  at 0, `eshm_read_timeout()` discarded everything it wrote until it passed the
+  old total - so a slave would log `RECONNECTED` and then sit silent. It is now
+  zeroed on reattach, and the next read re-baselines against the new channel.
+- **BINARY values were dropped by the native Python path.** `ESHMData.write_data()`
+  raised on `DataType.BINARY` and `read_data()` decoded it to `None`, even though
+  the C API marshals it as `struct { uint8_t* data; size_t len; }` and the C++
+  side round-trips it fine. Both directions now handle it.
+
+### Changed
+- **examples/ reorganised into nine numbered directories**, each self-contained,
+  each buildable standalone against an installed ESHM, and each pairing a C++
+  program with a `peer.py` that talks to it **in both directions**:
+
+  | | Directory | Covers |
+  |---|---|---|
+  | 01 | `hello_channel` | init/attach/write/read/timeouts/cleanup |
+  | 02 | `structured_data` | ASN.1 records, all five wire types incl. BINARY |
+  | 03 | `c_api` | `eshm_write_data`/`eshm_read_data`/`dh_*`, compiled as C |
+  | 04 | `monitoring` | `eshm_get_stats` (all 13 fields), role, liveness |
+  | 05 | `reconnection` | every recovery knob, `disconnect_behavior`, `ROLE_AUTO` |
+  | 06 | `large_payload` | payloads beyond `ESHM_MAX_DATA_SIZE`, chunking |
+  | 07 | `rich_types` | `Event`/`FunctionCall`/`ImageFrame` (C++ only) |
+  | 08 | `benchmark` | round-trip rate; pure-Python vs native codec |
+  | 09 | `integration` | `find_package` / submodule / FetchContent |
+
+- **Python examples moved out of `py/examples/`** and into the numbered
+  directory of the C++ program each one pairs with. `py/tests/performance/`
+  is unchanged.
+- **`examples/run_all.sh`** smoke-tests every C++/Python pairing, bounded and
+  exit-code driven. `scripts/test_interop.sh` now delegates to it;
+  `scripts/test_cpp_master_py_slave.sh` was removed as a duplicate.
+
+### Removed
+- Superseded example programs, folded into the numbered directories:
+  `simple_api_demo.cpp`, `simple_exchange.cpp`, `interop_cpp_{master,slave}.cpp`,
+  and the near-identical `test_unlimited_config.cpp` / `test_truly_unlimited.cpp`
+  (now `--attempts`/`--wait` flags on `resilient_consumer`).
+- `test_write_count.py` (stray, at the repo root).
+
+### Documentation
+- Every example directory has a README explaining what it teaches, plus four
+  facts the examples exist to make concrete: start the master first; a reader
+  only sees writes made after its first read; the channel holds one value per
+  direction rather than a queue; and `eshm_check_remote_alive()` reports "not
+  stale", which is true on a channel nobody ever attached to - use the
+  `slave_alive`/`master_alive` stats to ask whether a peer is there.
+- `examples/README.md` carries an API coverage table mapping every public entry
+  point to the example that demonstrates it.
+- Fixed README references to `py/examples/performance_test.py` and
+  `py/examples/benchmark_slave.py`, neither of which has ever existed.
+
 ## Unreleased - Installation, packaging and Python bindings
 
 ### Added

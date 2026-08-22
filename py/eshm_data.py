@@ -26,6 +26,16 @@ class DataType(IntEnum):
     IMAGE_FRAME = 7
 
 
+class _BinaryData(ctypes.Structure):
+    """How the C API passes BINARY values: struct { uint8_t* data; size_t len; }
+
+    Declared once here because both write_data() and read_data() need it; see
+    the value-representation table in include/data_handler_c_api.h.
+    """
+    _fields_ = [("data", ctypes.POINTER(ctypes.c_uint8)),
+                ("len", ctypes.c_size_t)]
+
+
 class DataItem:
     """Data item in the exchange"""
 
@@ -156,6 +166,16 @@ class ESHMData(ESHM):
                 val = ctypes.c_char_p(item.value.encode('utf-8'))
                 refs.append(val)
                 values[i] = ctypes.cast(val, ctypes.c_void_p)
+            elif item.type == DataType.BINARY:
+                # The C API reads BINARY through a { data, len } pair; keep the
+                # buffer and the struct alive until eshm_write_data returns.
+                payload = bytes(item.value)
+                buf = ctypes.create_string_buffer(payload, len(payload))
+                blob = _BinaryData(ctypes.cast(buf, ctypes.POINTER(ctypes.c_uint8)),
+                                   len(payload))
+                refs.append(buf)
+                refs.append(blob)
+                values[i] = ctypes.addressof(blob)
             else:
                 raise ValueError(f"Unsupported data type: {item.type}")
 
@@ -237,6 +257,9 @@ class ESHMData(ESHM):
                 value = ctypes.cast(out_values[i], ctypes.POINTER(ctypes.c_double)).contents.value
             elif dtype == DataType.STRING:
                 value = ctypes.cast(out_values[i], ctypes.c_char_p).value.decode('utf-8')
+            elif dtype == DataType.BINARY:
+                blob = ctypes.cast(out_values[i], ctypes.POINTER(_BinaryData)).contents
+                value = bytes(blob.data[:blob.len])
             else:
                 value = None
 

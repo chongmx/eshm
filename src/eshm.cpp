@@ -265,6 +265,16 @@ static void* monitor_thread_func(void* arg) {
                             reconnect_attempt_counter = 0;
                             reconnect_attempts = 0;
 
+                            // The new master's channel starts its write_count
+                            // at 0, while last_read_write_count still holds the
+                            // dead master's final value. Leaving it set makes
+                            // eshm_read_timeout() discard everything the new
+                            // master writes until it passes that old total, so
+                            // a "successful" reconnect delivers no data. Zero
+                            // it: the next read re-baselines against the new
+                            // channel, exactly as the first read after init does.
+                            handle->last_read_write_count = 0;
+
                             continue;
                         }
                     } else {

@@ -280,10 +280,10 @@ git commit -m "Use ESHM v1.0.0"
 
 ## Complete Example
 
-See [docs/examples/client_integration/](../examples/client_integration/) for a working example with:
-- CMakeLists.txt configuration
-- Master application
-- Slave application
+See [examples/09_integration/](../examples/09_integration/) for a working example with:
+- CMakeLists.txt carrying all three integration options, commented
+- Master and slave applications
+- A Python peer, so an integrated C++ app is reachable from scripts
 - Build instructions
 
 ---
@@ -293,4 +293,4 @@ See [docs/examples/client_integration/](../examples/client_integration/) for a w
 - [README.md](../README.md) - API reference and features
 - [Quick Start Guide](QUICK_START.md) - Getting started
 - [Testing Guide](TEST.md) - Tests and interoperability
-- [Examples](../examples/) - Usage examples
+- [Examples](../examples/) - Nine worked examples, each a C++/Python pair

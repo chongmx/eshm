@@ -2,7 +2,7 @@
 """
 ESHM Benchmark Slave - Performance Testing
 
-Based on simple_slave.py but optimized for benchmarking:
+Based on the consumer in examples/01_hello_channel but optimized for benchmarking:
 - Prints stats only every N messages (default: 1000)
 - Measures actual message reception rate
 - No verbose per-message output

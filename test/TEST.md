@@ -41,7 +41,7 @@ Expected output:
 
 **Terminal 2 - Start Python Slave:**
 ```bash
-python3 py/examples/simple_slave.py interop_test
+python3 examples/01_hello_channel/peer.py consume interop_test
 ```
 
 Expected output:
@@ -66,7 +66,7 @@ Initialized as SLAVE
 
 **Terminal 1 - Start Python Master:**
 ```bash
-python3 py/examples/simple_master.py interop_test2
+python3 examples/01_hello_channel/peer.py publish interop_test2
 ```
 
 Expected output:
@@ -96,7 +96,7 @@ Expected output:
 
 ### Test 3: Performance Benchmark (C++ Master + Python Slave)
 
-Measure actual bidirectional message throughput (read + write with ACK responses, like [simple_slave.py](../py/examples/simple_slave.py)).
+Measure actual bidirectional message throughput (read + write with ACK responses, like [examples/01_hello_channel/peer.py](../examples/01_hello_channel/peer.py)).
 
 **Terminal 1 - C++ Master (1000 msg/sec):**
 ```bash
@@ -190,11 +190,11 @@ Both processes **MUST** use identical SHM names:
 ```bash
 # Good
 ./build/eshm_demo master MY_SHM
-python3 py/examples/simple_slave.py MY_SHM
+python3 examples/01_hello_channel/peer.py consume MY_SHM
 
 # Bad - different names won't connect
 ./build/eshm_demo master MY_SHM
-python3 py/examples/simple_slave.py OTHER_NAME
+python3 examples/01_hello_channel/peer.py consume OTHER_NAME
 ```
 
 ### 2. Start Order

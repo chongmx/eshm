@@ -143,8 +143,9 @@ The Python package holds five modules: `eshm` (channel API), `data_handler`
 (pure-Python DER codec), `data_handler_native` and `eshm_data` (the same work
 done in C++ through the C API, for throughput), and the package `__init__`.
 
-Worked examples live in [examples/getting_started/](../examples/getting_started/)
-and [py/examples/getting_started.py](../py/examples/getting_started.py).
+Worked examples live in [examples/](../examples/). Start with
+[01_hello_channel](../examples/01_hello_channel/), which has a C++ publisher
+and consumer plus a `peer.py` that pairs with either of them.
 
 ## Troubleshooting
 

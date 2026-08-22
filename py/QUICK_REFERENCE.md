@@ -93,16 +93,16 @@ if __name__ == "__main__":
 
 ```bash
 # Simple
-python3 py/examples/simple_master.py
-python3 py/examples/simple_slave.py
+python3 examples/01_hello_channel/peer.py publish
+python3 examples/01_hello_channel/peer.py consume
 
 # Advanced (JSON, stats)
-python3 py/examples/advanced_example.py master
-python3 py/examples/advanced_example.py slave
+python3 examples/04_monitoring/peer.py generate
+python3 examples/04_monitoring/peer.py watch
 
 # Reconnection demo
-python3 py/examples/reconnect_demo.py slave
-python3 py/examples/reconnect_demo.py master
+python3 examples/05_reconnection/peer.py consume --attempts 0 --wait 0
+python3 examples/05_reconnection/peer.py publish
 
 # Performance benchmarks
 python3 py/tests/performance/benchmark_slave.py eshm1 1000

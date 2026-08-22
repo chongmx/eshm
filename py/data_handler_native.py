@@ -33,23 +33,10 @@ class DataItem:
 
 
 # Load the native library
-_LIB_PATH = os.path.join(os.path.dirname(__file__), '..', 'build', 'libeshm_data.so')
-
 def _load_library():
-    """Load the native DataHandler library"""
-    if not os.path.exists(_LIB_PATH):
-        raise RuntimeError(
-            f"Native DataHandler library not found at {_LIB_PATH}\n"
-            "Please build the shared library first:\n"
-            "  cd build\n"
-            "  g++ -shared -fPIC -o libeshm_data.so \\\n"
-            "    ../src/data_handler.cpp \\\n"
-            "    ../src/data_handler_c_api.cpp \\\n"
-            "    ../src/asn1_encode.cpp \\\n"
-            "    ../src/asn1_decode.cpp \\\n"
-            "    -I../include -std=c++17"
-        )
-    return ctypes.CDLL(_LIB_PATH)
+    """Load libeshm_data.so, which carries the dh_* C API."""
+    from eshm import library_path      # same directory in the source tree,
+    return ctypes.CDLL(str(library_path("eshm_data")))   # same package once installed
 
 
 class NativeDataHandler:
@@ -74,6 +61,8 @@ class NativeDataHandler:
     _lib_initialized = False
 
     def __init__(self):
+        self._handle = None   # so __del__/close() work if the setup below fails
+
         if not NativeDataHandler._lib_initialized:
             NativeDataHandler._lib = _load_library()
             NativeDataHandler._setup_library_functions()

@@ -1,0 +1,16 @@
+# Removes every file recorded by the last `cmake --install`.
+set(MANIFEST "@CMAKE_CURRENT_BINARY_DIR@/install_manifest.txt")
+
+if(NOT EXISTS "${MANIFEST}")
+    message(FATAL_ERROR "No install manifest: ${MANIFEST}\nNothing has been installed from this build directory.")
+endif()
+
+file(STRINGS "${MANIFEST}" files)
+foreach(file ${files})
+    message(STATUS "Uninstalling: $ENV{DESTDIR}${file}")
+    if(IS_SYMLINK "$ENV{DESTDIR}${file}" OR EXISTS "$ENV{DESTDIR}${file}")
+        file(REMOVE "$ENV{DESTDIR}${file}")
+    else()
+        message(STATUS "  already gone: $ENV{DESTDIR}${file}")
+    endif()
+endforeach()

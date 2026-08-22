@@ -9,3 +9,6 @@ py/__pycache__/
 core
 core.*
 .DS_Store
+# Packaging output
+dist/
+build-deb/

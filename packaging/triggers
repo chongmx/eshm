@@ -1,0 +1,4 @@
+# Debian Policy 8.1.1: a package that installs shared libraries into a default
+# library directory must activate libc's ldconfig trigger instead of calling
+# ldconfig from its maintainer scripts.
+activate-noawait ldconfig

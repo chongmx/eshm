@@ -11,7 +11,7 @@ from typing import List, Dict, Any, Tuple
 from enum import IntEnum
 
 # Re-use existing ESHM wrapper
-from eshm import ESHM, ESHMRole, ESHMDisconnectBehavior, ESHMConfig
+from eshm import ESHM, ESHMRole, ESHMError, ESHMDisconnectBehavior, ESHMConfig
 
 
 class DataType(IntEnum):
@@ -36,24 +36,10 @@ class DataItem:
 
 
 # Load the library
-_LIB_PATH = os.path.join(os.path.dirname(__file__), '..', 'build', 'libeshm_data_combined.so')
-
 def _load_library():
-    """Load the combined ESHM + DataHandler library"""
-    if not os.path.exists(_LIB_PATH):
-        raise RuntimeError(
-            f"Combined library not found at {_LIB_PATH}\n"
-            "Please build the shared library first:\n"
-            "  cd build\n"
-            "  g++ -shared -fPIC -o libeshm_data_combined.so \\\n"
-            "    ../src/eshm.cpp \\\n"
-            "    ../src/data_handler.cpp \\\n"
-            "    ../src/eshm_data_api.cpp \\\n"
-            "    ../src/asn1_encode.cpp \\\n"
-            "    ../src/asn1_decode.cpp \\\n"
-            "    -I../include -std=c++17 -pthread -lrt"
-        )
-    return ctypes.CDLL(_LIB_PATH)
+    """Load libeshm.so, which carries eshm_write_data/eshm_read_data."""
+    from eshm import library_path
+    return ctypes.CDLL(str(library_path("eshm")))
 
 
 class ESHMData(ESHM):
@@ -110,14 +96,16 @@ class ESHMData(ESHM):
         ]
         lib.eshm_write_data.restype = ctypes.c_int
 
-        # eshm_read_data
+        # eshm_read_data (declared in eshm.h)
         lib.eshm_read_data.argtypes = [
             ctypes.c_void_p,                    # eshm handle
             ctypes.POINTER(ctypes.c_uint8),     # out_types
             ctypes.POINTER(ctypes.c_char_p),    # out_keys
             ctypes.c_int,                       # max_key_len
             ctypes.POINTER(ctypes.c_void_p),    # out_values
-            ctypes.c_int                        # max_items
+            ctypes.c_int,                       # max_items
+            ctypes.POINTER(ctypes.c_int),       # item_count (out)
+            ctypes.c_uint32                     # timeout_ms
         ]
         lib.eshm_read_data.restype = ctypes.c_int
 
@@ -184,7 +172,7 @@ class ESHMData(ESHM):
             error = ESHMData._data_lib.eshm_data_get_last_error()
             raise RuntimeError(f"Write data failed: {error.decode('utf-8')}")
 
-    def read_data(self, max_items: int = 100) -> List[DataItem]:
+    def read_data(self, max_items: int = 100, timeout_ms: int = 1000) -> List[DataItem]:
         """
         Read and decode data from ESHM in a single C++ call
 
@@ -193,9 +181,10 @@ class ESHMData(ESHM):
 
         Args:
             max_items: Maximum number of items to read
+            timeout_ms: How long to wait for a message (0 = non-blocking)
 
         Returns:
-            List of DataItem objects (can be empty if no data)
+            List of DataItem objects (empty if nothing arrived in time)
 
         Raises:
             RuntimeError: If read fails
@@ -213,21 +202,26 @@ class ESHMData(ESHM):
         out_values = (ctypes.c_void_p * max_items)()
 
         # Call combined read (read + decode in C++)
-        count = ESHMData._data_lib.eshm_read_data(
+        item_count = ctypes.c_int(0)
+        ret = ESHMData._data_lib.eshm_read_data(
             self._handle,
             out_types,
             out_keys,
             max_key_len,
             out_values,
-            max_items
+            max_items,
+            ctypes.byref(item_count),
+            timeout_ms
         )
 
-        if count < 0:
-            error = ESHMData._data_lib.eshm_data_get_last_error()
-            raise RuntimeError(f"Read data failed: {error.decode('utf-8')}")
+        if ret in (ESHMError.NO_DATA, ESHMError.TIMEOUT):
+            return []  # Nothing new on the channel
+        if ret != ESHMError.SUCCESS:
+            raise RuntimeError(f"Read data failed: {self._error_string(ret)}")
 
+        count = item_count.value
         if count == 0:
-            return []  # No data available
+            return []
 
         # Extract results
         items = []
@@ -264,7 +258,7 @@ class ESHMData(ESHM):
             List of DataItem objects (empty if no data available)
         """
         try:
-            return self.read_data(max_items)
+            return self.read_data(max_items, timeout_ms=0)
         except RuntimeError:
             return []
 

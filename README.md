@@ -18,6 +18,28 @@ A high-performance, production-ready shared memory IPC library for Linux with ma
 - **Bidirectional Channels**: Separate master→slave and slave→master channels
 - **Python Support**: Full Python wrapper with C++ interoperability
 
+## Installation
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
+ctest --test-dir build --output-on-failure
+sudo cmake --install build && sudo ldconfig
+```
+
+Or build Debian packages and install those:
+
+```bash
+./scripts/export_deb.sh          # -> dist/libeshm1, libeshm-dev, python3-eshm
+cd dist && sudo apt install ./libeshm1_*.deb ./libeshm-dev_*.deb ./python3-eshm_*.deb
+./scripts/check_install.sh       # verify what a machine has
+```
+
+Removal is `sudo cmake --build build --target uninstall` for a source install,
+`sudo apt remove python3-eshm libeshm-dev libeshm1` for the packages.
+[docs/INSTALL.md](docs/INSTALL.md) covers both, the package split, and
+troubleshooting.
+
 ## Integration into Your Project
 
 ESHM can be integrated into your project in three ways:
@@ -156,6 +178,11 @@ eshm_destroy(handle);
 ```
 
 ### Basic Python Usage
+
+With `python3-eshm` installed (or with `py/` on `sys.path` in the source tree)
+the bindings find `libeshm.so` on their own - build tree, system directories,
+then the linker cache; `ESHM_LIB` overrides it and `eshm.library_path()` reports
+what was picked.
 
 ```python
 from eshm import ESHM, ESHMRole
@@ -615,6 +642,44 @@ See [test/image_transfer/README.md](test/image_transfer/README.md) for details.
 - C++17 compiler (GCC 7+, Clang 5+)
 - pthread and rt libraries
 
+## C API (ABI-stable surface)
+
+`shm_protocol::DataHandler` is a C++ class whose interface uses `std::string`,
+`std::vector` and `std::variant`, so it cannot be called from C, from ctypes, or
+safely across compiler and standard-library versions. Two headers expose the
+same functionality through plain C with opaque handles - this is what the Python
+bindings bind to, and what any non-C++ consumer should use:
+
+| Header | Library | API |
+|---|---|---|
+| [include/data_handler_c_api.h](include/data_handler_c_api.h) | `libeshm_data` | `dh_create`, `dh_encode`, `dh_decode`, `dh_free_value`, `dh_destroy` |
+| [include/eshm_data_api.h](include/eshm_data_api.h) | `libeshm` | `eshm_write_data` (encode + write), `eshm_data_free_value`, `eshm_data_get_last_error` |
+| [include/eshm.h](include/eshm.h) | `libeshm` | `eshm_read_data` (read + decode), plus the core channel API |
+
+```c
+DataHandlerHandle h = dh_create();
+uint8_t types[] = {0, 3};                       /* INTEGER, STRING */
+const char* keys[] = {"frame_id", "camera"};
+int64_t frame = 42;
+const void* values[] = {&frame, "front"};
+
+uint8_t buffer[4096];
+int n = dh_encode(h, types, keys, values, 2, buffer, sizeof(buffer));
+dh_destroy(h);
+```
+
+`test/functional/test_c_api.cpp` exercises both headers end to end.
+
+## Examples
+
+- [examples/getting_started/](examples/getting_started/) - publisher/consumer pair
+  built with `find_package(ESHM)`; copy the directory into your own project
+- [py/examples/getting_started.py](py/examples/getting_started.py) - the same
+  pair in Python; either side pairs with the C++ one
+- [examples/](examples/) - simple API, DataHandler and interop demos
+- `ctest --test-dir build` runs the suite; `test_selftest` alone verifies a
+  full master/slave round trip in one command
+
 ## License
 
-This is a demonstration/educational project.
+MIT - see [LICENSE](LICENSE).

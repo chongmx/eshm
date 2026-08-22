@@ -1,5 +1,56 @@
 # ESHM Changelog
 
+## Unreleased - Installation, packaging and Python bindings
+
+### Added
+- **LICENSE**: MIT.
+- **scripts/export_deb.sh**: builds policy-conformant Debian packages -
+  `libeshm1` (runtime), `libeshm-dev` (headers, `.so` symlinks, CMake package)
+  and `python3-eshm` (bindings), with `shlibs`, the `ldconfig` trigger,
+  `copyright` and `changelog.Debian.gz`.
+- **scripts/check_install.sh**: reports which pieces are installed on a machine
+  and what each missing one enables.
+- **CMake `uninstall` target**: removes what the last `cmake --install` recorded.
+- **Python bindings are installable**: `py/` is installed as the `eshm` package
+  into `python3/dist-packages` (`ESHM_INSTALL_PYTHON`, `ESHM_PYTHON_INSTALL_DIR`).
+- **examples/getting_started/**: publisher/consumer pair that builds standalone
+  against an installed ESHM via `find_package(ESHM)`, plus the Python twin in
+  `py/examples/getting_started.py`.
+- **test/functional/test_selftest.cpp**: one-command self-test (forks a slave,
+  drives it as master, verifies every byte of the round trip); wired into ctest.
+- **test/functional/test_c_api.cpp**: covers the C API - `dh_encode`/`dh_decode`
+  and a two-process `eshm_write_data`/`eshm_read_data` exchange.
+- **py/tests/test_native_api.py**: the same ground from Python, so the ctypes
+  bindings that sit on the C API stay honest. Both are wired into ctest.
+- **docs/INSTALL.md**: install, uninstall, packaging and troubleshooting guide.
+
+### Fixed
+- **The C API is now built and shipped**. `src/data_handler_c_api.cpp` (`dh_*`)
+  and `src/eshm_data_api.cpp` (`eshm_write_data`, `eshm_data_free_value`,
+  `eshm_data_get_last_error`) were in the tree but in no target, so those
+  symbols existed in no library. Both are compiled now - `dh_*` into
+  `libeshm_data`, the ESHM+DataHandler calls into `libeshm` - and declared by
+  two new public headers, `include/data_handler_c_api.h` and
+  `include/eshm_data_api.h`.
+- **Removed a stale duplicate `eshm_read_data`** from `src/eshm_data_api.cpp`.
+  It took six parameters and returned an item count, contradicting the
+  eight-parameter version that `eshm.h` declares and `src/eshm.cpp` implements
+  (which adds `item_count` and `timeout_ms`); compiling both would have been a
+  duplicate-symbol error.
+- **py/data_handler_native.py and py/eshm_data.py work again**: they looked for
+  `build/libeshm_data.so` and `build/libeshm_data_combined.so`, neither of which
+  any build produced, and `eshm_data.py` still called the old six-argument
+  `eshm_read_data`. Both now resolve the library through `library_path()` and
+  use the current signature; `read_data()` gained a `timeout_ms` argument.
+- **py/eshm.py**: locates `libeshm.so` automatically (build tree, system
+  directories, `ldconfig` cache, `ESHM_LIB` override) instead of a hard-coded
+  path that no build produced; `library_path()` exposes the result.
+- **py/eshm.py**: `ESHM.__init__` sets `_handle` before it can fail, so a slave
+  waiting for its master no longer floods stderr with `AttributeError` from
+  `__del__`.
+- **py/__init__.py**: also exports `DataHandler`, `DataItem`, `DataType`.
+
+
 ## December 2025 - Documentation Cleanup & Consolidation
 
 ### Documentation Simplification (Phase 2)

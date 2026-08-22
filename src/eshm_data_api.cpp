@@ -1,9 +1,14 @@
+#include "eshm_data_api.h"
 #include "eshm.h"
 #include "data_handler.h"
 #include <cstring>
 
 // High-performance C API for ESHM + DataHandler
 // Combines encoding/decoding with ESHM read/write in single calls
+//
+// eshm_read_data() is not defined here: eshm.h declares it and src/eshm.cpp
+// implements it, with an item_count out-parameter and a timeout that this file
+// once lacked.
 extern "C" {
 
 using namespace shm_protocol;
@@ -92,101 +97,6 @@ int eshm_write_data(ESHMHandle* eshm,
 
 // Read and decode data from ESHM (read + decode in one call)
 // Returns number of items decoded, or negative on error
-int eshm_read_data(ESHMHandle* eshm,
-                   uint8_t* out_types,        // Output: DataType values
-                   char** out_keys,           // Output: String keys (caller provides array of char*)
-                   int max_key_len,           // Max length for each key string
-                   void** out_values,         // Output: Pointers to allocated values
-                   int max_items)             // Maximum number of items to decode
-{
-    if (!eshm || !out_types || !out_keys || !out_values || max_items <= 0) {
-        snprintf(last_error, sizeof(last_error), "Invalid parameters");
-        return -1;
-    }
-
-    try {
-        uint8_t buffer[ESHM_MAX_DATA_SIZE];
-
-        // Read from ESHM
-        int bytes_read = eshm_read(eshm, buffer, sizeof(buffer));
-        if (bytes_read < 0) {
-            if (bytes_read == ESHM_ERROR_NO_DATA) {
-                return 0;  // No data available (not an error)
-            }
-            snprintf(last_error, sizeof(last_error), "ESHM read failed: %d", bytes_read);
-            return bytes_read;
-        }
-
-        if (bytes_read == 0) {
-            return 0;  // No data
-        }
-
-        // Decode
-        DataHandler handler;
-        auto items = handler.decodeDataBuffer(buffer, bytes_read);
-
-        if ((int)items.size() > max_items) {
-            snprintf(last_error, sizeof(last_error),
-                    "Too many items: got %zu, max %d", items.size(), max_items);
-            return -1;
-        }
-
-        // Extract values
-        for (size_t i = 0; i < items.size(); i++) {
-            out_types[i] = static_cast<uint8_t>(items[i].type);
-
-            // Copy key
-            strncpy(out_keys[i], items[i].key.c_str(), max_key_len - 1);
-            out_keys[i][max_key_len - 1] = '\0';
-
-            // Allocate and copy value
-            switch (items[i].type) {
-                case DataType::INTEGER: {
-                    int64_t* val = (int64_t*)malloc(sizeof(int64_t));
-                    *val = std::get<int64_t>(items[i].value);
-                    out_values[i] = val;
-                    break;
-                }
-                case DataType::BOOLEAN: {
-                    bool* val = (bool*)malloc(sizeof(bool));
-                    *val = std::get<bool>(items[i].value);
-                    out_values[i] = val;
-                    break;
-                }
-                case DataType::REAL: {
-                    double* val = (double*)malloc(sizeof(double));
-                    *val = std::get<double>(items[i].value);
-                    out_values[i] = val;
-                    break;
-                }
-                case DataType::STRING: {
-                    const auto& str = std::get<std::string>(items[i].value);
-                    char* val = (char*)malloc(str.size() + 1);
-                    strcpy(val, str.c_str());
-                    out_values[i] = val;
-                    break;
-                }
-                case DataType::BINARY: {
-                    const auto& vec = std::get<std::vector<uint8_t>>(items[i].value);
-                    struct BinaryData { uint8_t* data; size_t len; };
-                    auto* bin = (BinaryData*)malloc(sizeof(BinaryData));
-                    bin->len = vec.size();
-                    bin->data = (uint8_t*)malloc(vec.size());
-                    memcpy(bin->data, vec.data(), vec.size());
-                    out_values[i] = bin;
-                    break;
-                }
-            }
-        }
-
-        return items.size();
-
-    } catch (const std::exception& e) {
-        snprintf(last_error, sizeof(last_error), "Read failed: %s", e.what());
-        return -1;
-    }
-}
-
 // Free a decoded value (same as data_handler_c_api)
 void eshm_data_free_value(uint8_t type, void* value) {
     if (!value) return;

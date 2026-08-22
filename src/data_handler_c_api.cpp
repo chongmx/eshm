@@ -1,3 +1,4 @@
+#include "data_handler_c_api.h"
 #include "data_handler.h"
 #include <cstring>
 #include <cstdlib>
@@ -6,9 +7,6 @@
 extern "C" {
 
 using namespace shm_protocol;
-
-// Opaque handle for DataHandler
-typedef void* DataHandlerHandle;
 
 // Error handling
 static thread_local char last_error[256] = {0};

@@ -7,22 +7,11 @@ inter-process communication using shared memory.
 
 import ctypes
 import os
+import subprocess
+import sysconfig
 from enum import IntEnum
+from pathlib import Path
 from typing import Optional, Tuple
-
-# Load the ESHM library
-_lib_path = os.path.join(os.path.dirname(__file__), '..', 'build', 'libeshm.a')
-if not os.path.exists(_lib_path):
-    # Try alternative path
-    _lib_path = os.path.join(os.path.dirname(__file__), '..', 'libeshm.so')
-
-# For static library, we need to link it properly. Let's look for shared library instead.
-# Users should build a shared library version if needed, or we'll use ctypes with the demo
-_demo_path = os.path.join(os.path.dirname(__file__), '..', 'build', 'libeshm.a')
-
-# Since we have a static library, we'll need to create a shared library
-# For now, let's create a wrapper that uses ctypes to load the library
-# We'll need to build a shared library version
 
 class ESHMRole(IntEnum):
     """ESHM role types"""
@@ -87,20 +76,88 @@ class ESHMStats(ctypes.Structure):
         ("s2m_read_count", ctypes.c_uint64),
     ]
 
-# We need to build a shared library version of ESHM
-# For now, let's create a helper script to build it
-_SHARED_LIB_PATH = os.path.join(os.path.dirname(__file__), '..', 'build', 'libeshm.so')
+# Where to look for libeshm.so, in order:
+#   1. $ESHM_LIB                       explicit override
+#   2. the build tree next to this file (build/lib, build)
+#   3. the usual system directories, then the dynamic linker cache
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_MULTIARCH = sysconfig.get_config_var("MULTIARCH") or ""
+
+_BUILD_DIRS = (_REPO_ROOT / "build" / "lib", _REPO_ROOT / "build")
+_SYSTEM_DIRS = (
+    f"/usr/lib/{_MULTIARCH}" if _MULTIARCH else "/usr/lib",
+    "/usr/lib",
+    "/usr/local/lib",
+    f"/lib/{_MULTIARCH}" if _MULTIARCH else "/lib",
+)
+
+
+def _from_ldconfig(soname: str) -> Optional[Path]:
+    """Ask the dynamic linker cache where a library lives."""
+    try:
+        out = subprocess.run(["ldconfig", "-p"], capture_output=True, text=True,
+                             check=False).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for line in out.splitlines():
+        if soname in line and "=>" in line:
+            candidate = Path(line.split("=>")[-1].strip())
+            if candidate.exists():
+                return candidate
+    return None
+
+
+def library_path(name: str = "eshm") -> Path:
+    """Locate lib<name>.so - "eshm" or "eshm_data".
+
+    Order: the matching environment override ($ESHM_LIB / $ESHM_DATA_LIB), then
+    the directory an explicit $ESHM_LIB points into (the two libraries are
+    always installed together), then the build tree next to this file, the usual
+    system directories, and finally the dynamic linker cache.
+    Raises RuntimeError listing everything it tried.
+    """
+    override = os.environ.get("ESHM_LIB" if name == "eshm" else "ESHM_DATA_LIB")
+    if override:
+        if not Path(override).exists():
+            env = "ESHM_LIB" if name == "eshm" else "ESHM_DATA_LIB"
+            raise RuntimeError(f"{env} points at {override}, which does not exist")
+        return Path(override)
+
+    # A caller who pointed ESHM_LIB at a private prefix means its sibling too.
+    sibling_dirs = ()
+    eshm_override = os.environ.get("ESHM_LIB")
+    if name != "eshm" and eshm_override and Path(eshm_override).exists():
+        sibling_dirs = (Path(eshm_override).resolve().parent,)
+
+    sonames = (f"lib{name}.so", f"lib{name}.so.1")
+    tried = []
+    for directory in sibling_dirs + _BUILD_DIRS + _SYSTEM_DIRS:
+        for soname in sonames:
+            candidate = Path(directory) / soname
+            tried.append(candidate)
+            if candidate.exists():
+                return candidate
+
+    cached = _from_ldconfig(f"lib{name}.so")
+    if cached:
+        return cached
+
+    raise RuntimeError(
+        f"lib{name}.so not found. Searched:\n  " + "\n  ".join(str(t) for t in tried)
+        + "\n\nBuild it   : cmake -S . -B build && cmake --build build"
+          "\nor install : sudo cmake --install build   (or the libeshm1 package)"
+          "\nor set     : ESHM_LIB=/path/to/libeshm.so")
+
+
+# Kept for backwards compatibility; library_path() is the supported entry point.
+_SHARED_LIB_PATH = None
+
 
 def _load_library():
-    """Load the ESHM shared library"""
-    if not os.path.exists(_SHARED_LIB_PATH):
-        raise RuntimeError(
-            f"ESHM shared library not found at {_SHARED_LIB_PATH}\n"
-            "Please build the shared library first:\n"
-            "  cd build\n"
-            "  g++ -shared -fPIC -o libeshm.so ../eshm.cpp -pthread -lrt"
-        )
-    return ctypes.CDLL(_SHARED_LIB_PATH)
+    """Load the ESHM shared library."""
+    path = Path(_SHARED_LIB_PATH) if _SHARED_LIB_PATH else library_path("eshm")
+    return ctypes.CDLL(str(path))
+
 
 class ESHM:
     """
@@ -144,6 +201,8 @@ class ESHM:
             auto_cleanup: Auto cleanup on destruction
             use_threads: Use dedicated threads for heartbeat and monitoring
         """
+        self._handle = None   # so __del__/close() work if init below fails
+
         if not ESHM._lib_initialized:
             ESHM._lib = _load_library()
             ESHM._setup_library_functions()

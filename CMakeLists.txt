@@ -20,6 +20,7 @@ endif()
 option(ESHM_BUILD_TESTS "Build ESHM tests" ${ESHM_STANDALONE})
 option(ESHM_BUILD_EXAMPLES "Build ESHM examples" ${ESHM_STANDALONE})
 option(ESHM_BUILD_DEMO "Build ESHM demo application" ${ESHM_STANDALONE})
+option(ESHM_INSTALL_PYTHON "Install the Python bindings (python3-eshm)" ON)
 
 # Memory layout configuration
 set(ESHM_MAX_DATA_SIZE 4096 CACHE STRING "Maximum data size per channel in bytes (default: 4096)")
@@ -37,8 +38,10 @@ add_library(eshm_data SHARED
     src/asn1_encode.cpp
     src/asn1_decode.cpp
     src/data_handler.cpp
+    src/data_handler_c_api.cpp
     include/asn1_der.h
     include/data_handler.h
+    include/data_handler_c_api.h
 )
 
 target_include_directories(eshm_data PUBLIC
@@ -50,14 +53,16 @@ target_include_directories(eshm_data PUBLIC
 set_target_properties(eshm_data PROPERTIES
     VERSION ${PROJECT_VERSION}
     SOVERSION 1
-    PUBLIC_HEADER "include/asn1_der.h;include/data_handler.h"
+    PUBLIC_HEADER "include/asn1_der.h;include/data_handler.h;include/data_handler_c_api.h"
 )
 
 # ESHM core library
 add_library(eshm SHARED
     src/eshm.cpp
+    src/eshm_data_api.cpp
     include/eshm.h
     include/eshm_data.h
+    include/eshm_data_api.h
 )
 
 target_include_directories(eshm PUBLIC
@@ -71,7 +76,7 @@ target_link_libraries(eshm PUBLIC eshm_data pthread rt)
 set_target_properties(eshm PROPERTIES
     VERSION ${PROJECT_VERSION}
     SOVERSION 1
-    PUBLIC_HEADER "include/eshm.h;include/eshm_data.h"
+    PUBLIC_HEADER "include/eshm.h;include/eshm_data.h;include/eshm_data_api.h"
 )
 
 # Create alias targets for use when included as subdirectory
@@ -145,6 +150,58 @@ install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/include/eshm_config.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
+
+# Python bindings
+#
+# Debian keeps arch-independent system modules in /usr/lib/python3/dist-packages,
+# but a /usr/local install must use the versioned directory that interpreter
+# actually searches. Override with -DESHM_PYTHON_INSTALL_DIR=... on other
+# distributions (site-packages).
+if(ESHM_INSTALL_PYTHON)
+    if(NOT DEFINED ESHM_PYTHON_INSTALL_DIR)
+        if(CMAKE_INSTALL_PREFIX STREQUAL "/usr")
+            set(_eshm_pydir "lib/python3/dist-packages")
+        else()
+            find_package(Python3 QUIET COMPONENTS Interpreter)
+            if(Python3_Interpreter_FOUND)
+                set(_eshm_pydir
+                    "lib/python${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}/dist-packages")
+            else()
+                set(_eshm_pydir "lib/python3/dist-packages")
+            endif()
+        endif()
+        set(ESHM_PYTHON_INSTALL_DIR "${_eshm_pydir}" CACHE STRING
+            "Directory (relative to the prefix) for the Python package")
+    endif()
+
+    install(FILES
+        ${CMAKE_CURRENT_SOURCE_DIR}/py/__init__.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/py/eshm.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/py/data_handler.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/py/data_handler_native.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/py/eshm_data.py
+        DESTINATION ${ESHM_PYTHON_INSTALL_DIR}/eshm
+    )
+    message(STATUS "ESHM: Python bindings -> ${CMAKE_INSTALL_PREFIX}/${ESHM_PYTHON_INSTALL_DIR}/eshm")
+endif()
+
+# Licence and readme
+install(FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE
+    ${CMAKE_CURRENT_SOURCE_DIR}/README.md
+    DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/doc/eshm
+)
+
+# CMake has no uninstall rule of its own; this removes exactly what the last
+# `cmake --install` recorded in install_manifest.txt.
+if(NOT TARGET uninstall)
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/cmake_uninstall.cmake.in
+        ${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake
+        IMMEDIATE @ONLY)
+    add_custom_target(uninstall
+        COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake)
+endif()
 
 # Export targets for use in build tree (without installation)
 export(EXPORT ESHMTargets

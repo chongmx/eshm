@@ -1,3 +1,6 @@
+# Getting-started publisher/consumer pair (also buildable standalone)
+add_subdirectory(getting_started)
+
 # Simple API demo (ESHM only)
 add_executable(simple_api_demo simple_api_demo.cpp)
 target_link_libraries(simple_api_demo eshm)

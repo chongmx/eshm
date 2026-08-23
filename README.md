@@ -17,6 +17,8 @@ A high-performance, production-ready shared memory IPC library for Linux with ma
 - **Stale Detection**: Counter-based heartbeat monitoring (default: 100ms threshold)
 - **Bidirectional Channels**: Separate master→slave and slave→master channels
 - **Python Support**: Full Python wrapper with C++ interoperability
+- **GPU VRAM Sharing** (optional): zero-copy NVIDIA VRAM sharing between
+  processes - see [GPU VRAM Sharing](#gpu-vram-sharing-optional)
 
 ## Installation
 
@@ -371,6 +373,87 @@ cmake --build build-robot -j$(nproc)
 ./examples/11_robot_loop/run_bench.sh build-robot
 ```
 
+## GPU VRAM Sharing (optional)
+
+Beyond host-memory channels, ESHM can share a block of **NVIDIA VRAM**
+between processes with zero copy - one process allocates, the other maps the
+same physical memory and reads/writes it directly, no `cudaMemcpy` on either
+side of the boundary. Built as a separate optional library,
+`libeshm_cuda.so`, only when a CUDA toolkit is found
+(`-DESHM_ENABLE_CUDA=AUTO|ON|OFF`, default `AUTO`) - machines without a GPU
+build the rest of ESHM exactly as before.
+
+**Deployment:** `libeshm_cuda.so` never links `libcuda.so` - it loads the
+driver lazily with `dlopen()` on first use instead, so it has no NVIDIA
+entries in its own ELF dependencies. One build works on any driver new
+enough for VMM memory sharing (R470+; no per-CUDA-version or per-GPU-
+architecture rebuild - this file has no device code), and the same package
+installs and links fine on a machine with **no GPU at all**; only actually
+calling `eshm_cuda_create()`/`attach()` there fails, with a clear error. That
+is also why `scripts/export_deb.sh` ships it inside the ordinary
+`libeshm1`/`libeshm-dev` packages rather than a separate one - pass
+`--cuda OFF` to that script if you want a build that excludes the GPU code
+entirely rather than one that simply won't use it.
+
+```cpp
+#include <eshm_cuda.h>
+
+EshmCudaConfig config = eshm_cuda_default_config("frame", 640 * 480 * 4);
+EshmCudaBuffer* buf = eshm_cuda_create(&config);   // allocates VRAM, publishes it
+
+void* devptr; size_t size;
+eshm_cuda_get_ptr(buf, &devptr, &size);
+cudaMemcpy(devptr, host_frame, size, cudaMemcpyHostToDevice);
+cudaDeviceSynchronize();          // eshm_cuda maps memory, not stream order -
+                                   // sync before you signal "ready" yourself
+                                   // (e.g. with an eshm_rpc trigger)
+```
+
+```python
+from eshm.eshm_cuda import EshmCudaBuffer
+
+buf = EshmCudaBuffer.attach("frame")
+arr = buf.as_cupy(shape=(480, 640, 4), dtype="uint8")   # zero-copy cupy.ndarray
+```
+
+**Mechanism:** the CUDA driver's VMM API (`cuMemCreate` +
+`cuMemExportToShareableHandle` with a POSIX file descriptor), not the legacy
+`cudaIpcGetMemHandle` - which is unreliable under WSL2. The fd is handed to
+attachers over an abstract-namespace `AF_UNIX` socket (`SCM_RIGHTS`), since a
+raw fd number is meaningless across processes and POSIX shared memory cannot
+carry a live one. Verified end to end on WSL2: a C++ producer and a Python
+consumer in **separate processes** sharing the same VRAM, byte-exact.
+
+**Version independence:** the Python side never touches a numpy/cupy C
+struct. `__cuda_array_interface__` is a plain Python dict (an int pointer, a
+shape tuple, a dtype string) - not an ABI - so `as_cupy()` works unmodified
+regardless of the numpy/cupy version installed. Verified across numpy
+1.26.4+cupy 13.6.0 and numpy 2.5.2+cupy 14.2.0 reading the same C++-written
+VRAM in the same run.
+
+**What it does not do:** synchronize the data. `eshm_cuda` maps memory; nothing
+stops a reader and a writer from touching the same bytes at once. Signal
+readiness yourself (an [`eshm_rpc`](examples/10_triggers/) trigger after your
+stream has synced is the pattern used throughout), and if read/write can
+overlap under load, double-buffer - see the "sharp edge" section of
+[examples/12_gpu_shared_tensor/README.md](examples/12_gpu_shared_tensor/README.md),
+which reproduces and fixes a real torn read hit while building this feature.
+
+```bash
+python3 examples/12_gpu_shared_tensor/peer.py consume gpu_frame        # terminal 1
+./build/examples/12_gpu_shared_tensor/gpu_tensor_producer gpu_frame 8  # terminal 2
+```
+
+**Video-frame streaming throughput** is benchmarked in the same directory
+(`gpu_frame_bench` + `gpu_frame_drain.py`, `./run_gpu_bench.sh`). Measured
+on one machine (WSL2, RTX 5060 Laptop): 1080p into Python at a realistic 30
+fps delivers **100% of frames, 0.4% torn, 1.96 ms p50 / 8.42 ms p99
+latency**, with 48 bytes crossing the host channel per frame regardless of
+resolution. Flat-out (unpaced) load pushes the torn rate up to 25% at
+1080p - a real, load-dependent effect, not a baseline risk; see the
+[benchmark section](examples/12_gpu_shared_tensor/README.md#benchmark-how-fast-can-video-actually-stream-through-vram)
+for the full table and what torn rate means for your own workload.
+
 ## Configuration Options
 
 | Parameter | Description | Default |
@@ -578,6 +661,17 @@ while (running) {
 - `ESHM_ERROR_BUFFER_TOO_SMALL` - Buffer too small
 - `ESHM_ERROR_NOT_INITIALIZED` - SHM not initialized
 
+### GPU VRAM Sharing (optional - [include/eshm_cuda.h](include/eshm_cuda.h))
+- `eshm_cuda_create(config)` - Allocate VRAM and publish it under a name
+- `eshm_cuda_attach(name, timeout_ms)` - Map another process's published VRAM
+  into this one, zero copy
+- `eshm_cuda_get_ptr(buf, &devptr, &size)` - Process-local device pointer
+- `eshm_cuda_device(buf)` / `eshm_cuda_generation(buf)` - Which GPU; reserved
+  reallocation counter
+- `eshm_cuda_destroy(buf)` - Unmap/release
+- Python: `eshm.eshm_cuda.EshmCudaBuffer` mirrors this 1:1, plus
+  `.as_cupy(shape, dtype)` for a zero-copy `cupy.ndarray` view
+
 ## Project Structure
 
 ```
@@ -587,12 +681,14 @@ eshm/
 │   ├── eshm_data.h         # Data structures
 │   ├── data_handler.h      # ASN.1 data handler
 │   ├── asn1_der.h          # ASN.1 encoder/decoder
+│   ├── eshm_cuda.h         # GPU VRAM sharing (optional, needs CUDA)
 │   └── eshm_config.h.in    # Configuration template (generates eshm_config.h)
 ├── src/                    # Implementation files
 │   ├── eshm.cpp            # Core ESHM implementation
 │   ├── data_handler.cpp
 │   ├── asn1_encode.cpp
-│   └── asn1_decode.cpp
+│   ├── asn1_decode.cpp
+│   └── eshm_cuda.cpp       # GPU VRAM sharing implementation (libeshm_cuda.so)
 ├── demo/                   # Demo application
 │   └── main.cpp            # Example usage (1000 msg/sec)
 ├── test/                   # Unit and integration tests
@@ -610,10 +706,12 @@ eshm/
 │   ├── 07_rich_types/      # Event / FunctionCall / ImageFrame (C++ only)
 │   ├── 08_benchmark/       # Round-trip throughput
 │   ├── 09_integration/     # Consuming ESHM from your own project
+│   ├── 12_gpu_shared_tensor/ # Zero-copy NVIDIA VRAM sharing (needs a GPU)
 │   ├── run_all.sh          # Smoke-tests every pairing
 │   └── README.md           # Index and API coverage map
 ├── py/                     # Python wrapper
 │   ├── eshm.py             # Python bindings
+│   ├── eshm_cuda.py        # GPU VRAM sharing bindings (optional)
 │   ├── build_shared_lib.sh
 │   └── tests/
 ├── cmake/                  # CMake configuration files
@@ -665,15 +763,19 @@ See [test/image_transfer/README.md](test/image_transfer/README.md) for details.
 
 ## Library Information
 
-**Version:** 1.1.0
+**Version:** 1.2.0
 
 **Shared Libraries:**
-- `libeshm.so.1.1.0` - Core ESHM library (~155 KB with default 4KB channels)
-- `libeshm_data.so.1.1.0` - ASN.1 data handler library (~920 KB)
+- `libeshm.so.1.2.0` - Core ESHM library (~155 KB with default 4KB channels)
+- `libeshm_data.so.1.2.0` - ASN.1 data handler library (~920 KB)
+- `libeshm_cuda.so.1.2.0` - Optional GPU VRAM sharing library, built only
+  when a CUDA toolkit is found (`-DESHM_ENABLE_CUDA=AUTO|ON|OFF`)
 
 **Versioning:**
-- SOVERSION: 1 (binary compatibility within major version)
-- Full version: 1.1.0 (follows semantic versioning)
+- SOVERSION: 1 (binary compatibility within major version) - unchanged by
+  1.2.0; `eshm_cuda` is new but additive, and nothing in the existing C ABI
+  moved
+- Full version: 1.2.0 (follows semantic versioning)
 - Shared-memory protocol: `ESHM_VERSION` 3, validated on attach. This is
   versioned separately from the library because it changed incompatibly in
   1.1.0 while the C ABI did not - both ends of a channel must be built
@@ -693,11 +795,13 @@ See [test/image_transfer/README.md](test/image_transfer/README.md) for details.
 - [Memory Layout Guide](docs/MEMORY_LAYOUT.md) - Detailed guide to memory layout customization
 - [Integration Example](examples/09_integration/) - Working example with master/slave applications
 - [Examples Guide](examples/README.md) - Overview of all examples
+- [GPU VRAM Sharing Example](examples/12_gpu_shared_tensor/) - Zero-copy NVIDIA VRAM sharing, C++ ↔ Python
 - [4K Image Transfer Test](test/image_transfer/README.md) - Large data transfer examples
 - [Quick Start Guide](docs/QUICK_START.md) - Getting started tutorial
 - [Testing Guide](test/TEST.md) - C++↔Python interoperability and unit tests
 - [Python README](py/README.md) - Complete Python documentation
 - [Changelog](CHANGELOG.md) - Recent improvements
+- [Release Notes v1.2](RELEASE_NOTES_v1.2.md) - GPU VRAM sharing, in depth
 
 ## Technical Details
 
@@ -723,6 +827,8 @@ See [test/image_transfer/README.md](test/image_transfer/README.md) for details.
 - CMake 3.10+
 - C++17 compiler (GCC 7+, Clang 5+)
 - pthread and rt libraries
+- Optional, for [GPU VRAM sharing](#gpu-vram-sharing-optional): an NVIDIA GPU,
+  driver R470+, and a CUDA toolkit (`find_package(CUDAToolkit)`, CMake 3.17+)
 
 ## C API (ABI-stable surface)
 

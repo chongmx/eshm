@@ -128,19 +128,25 @@ def _from_ldconfig(soname: str) -> Optional[Path]:
     return None
 
 
-def library_path(name: str = "eshm") -> Path:
-    """Locate lib<name>.so - "eshm" or "eshm_data".
+#: Env var consulted per library name in library_path(). "eshm_cuda" is the
+#: optional GPU VRAM module (include/eshm_cuda.h) and may not be built at all.
+_ENV_OVERRIDE = {"eshm": "ESHM_LIB", "eshm_data": "ESHM_DATA_LIB", "eshm_cuda": "ESHM_CUDA_LIB"}
 
-    Order: the matching environment override ($ESHM_LIB / $ESHM_DATA_LIB), then
-    the directory an explicit $ESHM_LIB points into (the two libraries are
-    always installed together), then the build tree next to this file, the usual
-    system directories, and finally the dynamic linker cache.
+
+def library_path(name: str = "eshm") -> Path:
+    """Locate lib<name>.so - "eshm", "eshm_data", or "eshm_cuda".
+
+    Order: the matching environment override ($ESHM_LIB / $ESHM_DATA_LIB /
+    $ESHM_CUDA_LIB), then the directory an explicit $ESHM_LIB points into (the
+    core libraries are always installed together), then the build tree next
+    to this file, the usual system directories, and finally the dynamic
+    linker cache.
     Raises RuntimeError listing everything it tried.
     """
-    override = os.environ.get("ESHM_LIB" if name == "eshm" else "ESHM_DATA_LIB")
+    override = os.environ.get(_ENV_OVERRIDE.get(name, f"ESHM_{name.upper()}_LIB"))
     if override:
         if not Path(override).exists():
-            env = "ESHM_LIB" if name == "eshm" else "ESHM_DATA_LIB"
+            env = _ENV_OVERRIDE.get(name, f"ESHM_{name.upper()}_LIB")
             raise RuntimeError(f"{env} points at {override}, which does not exist")
         return Path(override)
 

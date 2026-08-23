@@ -77,6 +77,12 @@ if lib="$(found_in libeshm_data.so.1)"; then
 else
     report no "libeshm_data.so.1" "install the 'libeshm1' package"
 fi
+if lib="$(found_in libeshm_cuda.so.1)"; then
+    report ok "libeshm_cuda.so.1" "$lib (GPU VRAM sharing - dlopen's libcuda.so.1 lazily, works with no GPU present)"
+else
+    printf '  %s-%s %-28s %s\n' "$DIM" "$RESET" "libeshm_cuda.so.1" \
+        "${DIM}not built (optional: needs a CUDA toolkit at build time, export_deb.sh --cuda ON|AUTO)${RESET}"
+fi
 if [ -z "$ROOT" ]; then
     # Capture first: `grep -q` exits early, and with pipefail that SIGPIPE
     # would look like "not found".
@@ -101,9 +107,17 @@ else
     report no "libeshm.so symlink" "install the 'libeshm-dev' package (needed by -leshm)"
 fi
 if cfg="$(found_in cmake/ESHM/ESHMConfig.cmake)"; then
-    report ok "CMake package" "find_package(ESHM 1.0 REQUIRED)"
+    report ok "CMake package" "find_package(ESHM 1.2 REQUIRED)  # 1.0/1.1 also work (SameMajorVersion); use the version you actually rely on"
 else
     report no "CMake package" "install the 'libeshm-dev' package"
+fi
+if [ -f "$ROOT$PREFIX/include/eshm_cuda.h" ]; then
+    report ok "eshm_cuda.h" "$ROOT$PREFIX/include/eshm_cuda.h"
+elif lib="$(found_in libeshm_cuda.so.1)"; then
+    report no "eshm_cuda.h" "libeshm_cuda.so.1 is installed but the header is not - install 'libeshm-dev'"
+else
+    printf '  %s-%s %-28s %s\n' "$DIM" "$RESET" "eshm_cuda.h" \
+        "${DIM}not built (optional GPU VRAM sharing header)${RESET}"
 fi
 
 echo

@@ -1,5 +1,71 @@
 # ESHM Changelog
 
+## 1.2.0 - 2026-08-23
+
+### Added - GPU VRAM sharing (optional)
+
+- **`include/eshm_cuda.h` / `libeshm_cuda.so`: zero-copy NVIDIA VRAM sharing
+  between processes.** One process calls `eshm_cuda_create()` to allocate
+  device memory and publish it by name; any number of others call
+  `eshm_cuda_attach()` to map the *same physical VRAM* into their own address
+  space, each getting a process-local `CUdeviceptr` for it. Built as a
+  separate library, only when a CUDA toolkit is found
+  (`-DESHM_ENABLE_CUDA=AUTO|ON|OFF`, default `AUTO`) - the rest of ESHM builds
+  unchanged on machines with no GPU.
+- **Mechanism: the CUDA driver's VMM API, not legacy `cudaIpc*`.**
+  `cuMemCreate` + `cuMemExportToShareableHandle` with a POSIX file
+  descriptor, handed to attachers over an abstract-namespace `AF_UNIX` socket
+  (`SCM_RIGHTS`) - a raw fd number is meaningless across processes and POSIX
+  shared memory cannot carry a live one. Chosen specifically because the
+  legacy `cudaIpcGetMemHandle`/`cudaIpcOpenMemHandle` path is unreliable
+  under WSL2; this one is verified working there, end to end, across two
+  independently-launched processes.
+- **`py/eshm_cuda.py`: `EshmCudaBuffer`, a thin ctypes shell over
+  `libeshm_cuda`.** Every CUDA driver call and the fd handoff happen in C++ -
+  Python only receives a pointer/size and describes it with
+  `__cuda_array_interface__`, a plain-Python-value protocol (int pointer,
+  shape tuple, dtype string) rather than a numpy/cupy ABI. `.as_cupy()` wraps
+  that as a zero-copy `cupy.ndarray`. Verified to work unmodified across
+  numpy 1.26.4+cupy 13.6.0 and numpy 2.5.2+cupy 14.2.0 (opposite sides of the
+  numpy 1.x/2.x C-ABI break) reading the same C++-written VRAM in the same
+  run.
+- **`examples/12_gpu_shared_tensor/`**: a C++ producer writes a tensor into
+  VRAM with `cudaMemcpy`, syncs the stream, and fires an `eshm_rpc` trigger
+  over an ordinary host channel to signal readiness - `eshm_cuda` maps
+  memory, it does not order writes against reads, so that signal is still the
+  caller's job, same as every other example. Its README documents a real
+  torn read hit while building the example (three separate GPU reads with no
+  synchronization landing on different moments of a concurrent write) and the
+  single-snapshot-read fix, plus the double-buffering pattern needed if a
+  producer and consumer can genuinely overlap under load.
+- **`gpu_frame_bench` / `gpu_frame_drain.py` / `run_gpu_bench.sh`**: a
+  video-frame streaming benchmark for the same directory, measuring
+  delivered rate, a header/footer torn-read check, and latency across
+  resolutions and pacing. Headline measured result (WSL2, RTX 5060 Laptop):
+  1080p into Python at a paced 30 fps delivers 100% of frames, 0.4% torn,
+  1.96 ms p50 / 8.42 ms p99 latency; flat-out (unpaced) load pushes torn rate
+  to 25% at 1080p, load-dependent and expected, not a baseline defect.
+- **`libeshm_cuda.so` no longer links `libcuda.so`** - it `dlopen()`s
+  `libcuda.so.1` lazily on first use instead. Verified against the CUDA 13.2
+  headers this was built with: every driver symbol it calls is unversioned
+  (the one exception, `cuDevicePrimaryCtxRelease` -> `cuDevicePrimaryCtxRelease_v2`,
+  has been stable since that function's introduction), so one build runs
+  against any driver new enough for VMM POSIX-fd sharing (R470+) - no
+  per-CUDA-version rebuild, and no per-GPU-architecture build either, since
+  this file contains no device code at all. The practical effect: the
+  library now has zero NVIDIA-related entries in its ELF `NEEDED` list, so it
+  installs, links, and loads on a machine with no GPU at all; only actually
+  calling `eshm_cuda_create()`/`attach()` fails there, with a clear error,
+  instead of the whole process refusing to start. `scripts/export_deb.sh`
+  needed no changes to fold `libeshm_cuda.so` into the existing
+  `libeshm1`/`libeshm-dev` packages as a result - confirmed via
+  `dpkg-shlibdeps`, `libeshm1`'s `Depends:` is unchanged. Added
+  `--cuda AUTO|ON|OFF` to the script for builds that should not compile the
+  GPU code in at all.
+- Fixed `include(GNUInstallDirs)` running after `eshm_cuda`'s own
+  `install(TARGETS ...)`, which had been landing `libeshm_cuda.so` outside
+  the multiarch library directory its siblings use.
+
 ## 1.1.0 - 2026-08-23
 
 Two themes: push wakeup for the read path, and a reorganised example tree that

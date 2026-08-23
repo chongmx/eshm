@@ -31,6 +31,7 @@ WITH_TOOLS=0
 RUN_TESTS=1
 CLEAN=0
 DATA_SIZE=""
+CUDA="AUTO"
 JOBS="$(nproc 2>/dev/null || echo 2)"
 
 usage() {
@@ -46,6 +47,12 @@ Options:
       --only WHICH       runtime | dev | python | all (default: all)
       --with-tools       also ship test_eshm and the Python example (runtime package)
       --data-size N      build with -DESHM_MAX_DATA_SIZE=N
+      --cuda WHICH       AUTO | ON | OFF - GPU VRAM sharing module (default: AUTO,
+                         same as the library's own default). libeshm_cuda has no
+                         hard runtime dependency on the NVIDIA driver (it is
+                         dlopen'd lazily) and rides in the same libeshm1/-dev
+                         packages when built - OFF only matters if you want a
+                         build that does not compile the GPU code in at all.
       --skip-tests       do not run ctest before packaging
       --clean            remove the build directory first
   -j, --jobs N           parallel build jobs (default: $JOBS)
@@ -70,6 +77,7 @@ while [ $# -gt 0 ]; do
         --prefix)         PREFIX="${2:?}"; shift 2 ;;
         --only)           ONLY="${2:?}"; shift 2 ;;
         --data-size)      DATA_SIZE="${2:?}"; shift 2 ;;
+        --cuda)           CUDA="${2:?}"; shift 2 ;;
         -j|--jobs)        JOBS="${2:?}"; shift 2 ;;
         --with-tools)     WITH_TOOLS=1; shift ;;
         --skip-tests)     RUN_TESTS=0; shift ;;
@@ -84,6 +92,10 @@ case "$ONLY" in runtime|dev|python|all|both) ;;
     *) die "--only takes runtime, dev, python or all" ;;
 esac
 [ "$ONLY" = "both" ] && ONLY="all"   # accepted spelling for runtime + dev + python
+
+case "$CUDA" in AUTO|ON|OFF) ;;
+    *) die "--cuda takes AUTO, ON or OFF" ;;
+esac
 
 # Policy names a runtime library package after its SONAME (libeshm.so.1 ->
 # libeshm1), with <libname>-dev beside it.
@@ -124,6 +136,7 @@ cmake_args=(
     -DESHM_BUILD_TESTS="$([ "$RUN_TESTS" -eq 1 ] || [ "$WITH_TOOLS" -eq 1 ] && echo ON || echo OFF)"
     -DESHM_BUILD_DEMO="$([ "$WITH_TOOLS" -eq 1 ] && echo ON || echo OFF)"
     -DESHM_BUILD_EXAMPLES=OFF
+    -DESHM_ENABLE_CUDA="$CUDA"
 )
 [ -n "$DATA_SIZE" ] && cmake_args+=(-DESHM_MAX_DATA_SIZE="$DATA_SIZE")
 cmake "${cmake_args[@]}" > /dev/null

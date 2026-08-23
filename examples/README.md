@@ -18,7 +18,8 @@ examples/
 ├── 09_integration/       master.cpp      slave.cpp        peer.py
 ├── 10_triggers/          trigger_master.cpp  trigger_worker.cpp   peer.py
 ├── 11_robot_loop/        robot_sim.cpp   policy.py   run_bench.sh
-└── run_all.sh            smoke-tests every pairing
+├── 12_gpu_shared_tensor/ producer.cpp                             peer.py
+└── run_all.sh            smoke-tests every pairing (excludes 12, needs a GPU)
 ```
 
 | # | Directory | What it teaches | Languages |
@@ -34,6 +35,7 @@ examples/
 | 09 | [integration](09_integration/) | Consuming ESHM from your own CMake project | C++ ↔ Python |
 | 10 | [triggers](10_triggers/) | Register a function or event handler the peer can fire | C++ ↔ Python |
 | 11 | [robot_loop](11_robot_loop/) | Policy-in-the-loop benchmark: 1 kHz control + camera streams + Python inference | C++ ↔ Python |
+| 12 | [gpu_shared_tensor](12_gpu_shared_tensor/) | Zero-copy NVIDIA VRAM sharing; C++ writes, Python reads as `cupy.ndarray` | C++ → Python (needs a GPU) |
 
 ## Build and run
 

@@ -29,7 +29,7 @@ from .eshm import (
 # Pure-Python ASN.1 DER codec, wire compatible with the C++ DataHandler.
 from .data_handler import DataHandler, DataItem, DataType
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 __all__ = [
     "ESHM",
     "ESHMRole",

@@ -18,6 +18,7 @@ add_subdirectory(08_benchmark)
 add_subdirectory(09_integration)
 add_subdirectory(10_triggers)
 add_subdirectory(11_robot_loop)
+add_subdirectory(12_gpu_shared_tensor)
 
 # 06_large_payload needs a channel bigger than the 4 KB default to show frames
 # moving in one write; it degrades gracefully and says so when built small.

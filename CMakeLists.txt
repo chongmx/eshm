@@ -1,8 +1,13 @@
 cmake_minimum_required(VERSION 3.10)
-project(ESHM VERSION 1.1.0 LANGUAGES CXX)
+project(ESHM VERSION 1.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)  # Upgraded to C++17 for std::variant
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Needed before any target's install(), not just the main one below - the
+# eshm_cuda block runs first and used to see CMAKE_INSTALL_LIBDIR unset,
+# landing its .so outside the multiarch directory the other libraries use.
+include(GNUInstallDirs)
 
 # Compiler flags
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -pthread")
@@ -21,6 +26,27 @@ option(ESHM_BUILD_TESTS "Build ESHM tests" ${ESHM_STANDALONE})
 option(ESHM_BUILD_EXAMPLES "Build ESHM examples" ${ESHM_STANDALONE})
 option(ESHM_BUILD_DEMO "Build ESHM demo application" ${ESHM_STANDALONE})
 option(ESHM_INSTALL_PYTHON "Install the Python bindings (python3-eshm)" ON)
+
+# Optional GPU VRAM sharing module (src/eshm_cuda.cpp). AUTO builds it only if
+# a CUDA toolkit is found; ON fails the configure if it is not; OFF always
+# skips it. Needs the driver API only (libcuda), not nvcc, so no CUDA language
+# is enabled - find_package(CUDAToolkit) is enough to get headers + libcuda.
+set(ESHM_ENABLE_CUDA "AUTO" CACHE STRING "Build the GPU VRAM sharing module: AUTO, ON, or OFF")
+set_property(CACHE ESHM_ENABLE_CUDA PROPERTY STRINGS AUTO ON OFF)
+
+if(NOT ESHM_ENABLE_CUDA STREQUAL "OFF")
+    find_package(CUDAToolkit QUIET)
+    if(CUDAToolkit_FOUND)
+        set(ESHM_CUDA_AVAILABLE TRUE)
+    elseif(ESHM_ENABLE_CUDA STREQUAL "ON")
+        message(FATAL_ERROR "ESHM_ENABLE_CUDA=ON but no CUDA toolkit was found")
+    else()
+        set(ESHM_CUDA_AVAILABLE FALSE)
+        message(STATUS "ESHM: no CUDA toolkit found, skipping eshm_cuda (GPU VRAM sharing)")
+    endif()
+else()
+    set(ESHM_CUDA_AVAILABLE FALSE)
+endif()
 
 # Memory layout configuration
 set(ESHM_MAX_DATA_SIZE 4096 CACHE STRING "Maximum data size per channel in bytes (default: 4096)")
@@ -85,6 +111,41 @@ set_target_properties(eshm PROPERTIES
 add_library(ESHM::eshm ALIAS eshm)
 add_library(ESHM::eshm_data ALIAS eshm_data)
 
+# Optional GPU VRAM sharing library. Separate .so on purpose: the core eshm
+# library must keep building on machines with no CUDA toolkit at all.
+if(ESHM_CUDA_AVAILABLE)
+    add_library(eshm_cuda SHARED
+        src/eshm_cuda.cpp
+        include/eshm_cuda.h
+    )
+    target_include_directories(eshm_cuda PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+    )
+    # cuda.h only - never linked against libcuda.so. eshm_cuda.cpp dlopen()s
+    # libcuda.so.1 itself at first use, so this library carries no ELF NEEDED
+    # entry on anything CUDA-related and loads fine even with no NVIDIA
+    # driver installed; only actually calling eshm_cuda_create()/attach()
+    # fails, with a clear error, if there is no compatible driver.
+    target_include_directories(eshm_cuda PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+    target_link_libraries(eshm_cuda PUBLIC pthread ${CMAKE_DL_LIBS})
+    set_target_properties(eshm_cuda PROPERTIES
+        VERSION ${PROJECT_VERSION}
+        SOVERSION 1
+        PUBLIC_HEADER "include/eshm_cuda.h"
+    )
+    add_library(ESHM::eshm_cuda ALIAS eshm_cuda)
+
+    install(TARGETS eshm_cuda
+        EXPORT ESHMTargets
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    )
+endif()
+
 # Demo executable (only built in standalone mode by default)
 if(ESHM_BUILD_DEMO)
     add_executable(eshm_demo demo/main.cpp)
@@ -103,7 +164,6 @@ if(ESHM_BUILD_EXAMPLES)
 endif()
 
 # Installation
-include(GNUInstallDirs)
 
 install(TARGETS eshm eshm_data
     EXPORT ESHMTargets
@@ -183,6 +243,7 @@ if(ESHM_INSTALL_PYTHON)
         ${CMAKE_CURRENT_SOURCE_DIR}/py/data_handler_native.py
         ${CMAKE_CURRENT_SOURCE_DIR}/py/eshm_data.py
         ${CMAKE_CURRENT_SOURCE_DIR}/py/rpc.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/py/eshm_cuda.py
         DESTINATION ${ESHM_PYTHON_INSTALL_DIR}/eshm
     )
     message(STATUS "ESHM: Python bindings -> ${CMAKE_INSTALL_PREFIX}/${ESHM_PYTHON_INSTALL_DIR}/eshm")

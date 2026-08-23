@@ -278,6 +278,19 @@ git commit -m "Use ESHM v1.1.0"
 
 ---
 
+## Version compatibility
+
+Two things are versioned independently:
+
+| | Current | Rule |
+|---|---|---|
+| Library / C ABI | 1.1.0, `SOVERSION` 1 | Adding symbols is backward compatible; linking against a newer 1.x needs no recompilation |
+| Shared-memory protocol | `ESHM_VERSION` 3 | **Both ends of a channel must be built against the same version.** `eshm_init()` validates it on attach and refuses a mismatch |
+
+The same applies to `ESHM_MAX_DATA_SIZE`: it is compile-time, and it changes
+`sizeof(ESHMData)`. Two peers built with different values are now rejected at
+attach with a diagnostic - before 1.1.0 they attached and then crashed.
+
 ## Complete Example
 
 See [examples/09_integration/](../examples/09_integration/) for a working example with:

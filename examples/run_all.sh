@@ -29,7 +29,7 @@ fail=0
 run_pair() {
     local name="$1" channel="$2" master="$3" slave="$4"
     printf '%-52s ' "$name"
-    rm -f "/dev/shm/eshm_$channel" 2>/dev/null
+    rm -f "/dev/shm/eshm_$channel" "/dev/shm/eshm_${channel}_ctl" 2>/dev/null
 
     timeout 40 $master > "/tmp/eshm_ex_master.log" 2>&1 &
     local mpid=$!
@@ -88,8 +88,26 @@ run_pair "Python sender -> C++ receiver" ex06b \
     "$BIN/06_large_payload/frame_receiver ex06b --frames 3"
 
 echo
+echo "=== 10 named triggers (call + event, both directions) ==="
+run_pair "C++ master    -> Python worker" ex10a \
+    "$BIN/10_triggers/trigger_master ex10a 3" \
+    "python3 $HERE/10_triggers/peer.py worker ex10a"
+run_pair "Python master -> C++ worker" ex10b \
+    "python3 $HERE/10_triggers/peer.py master ex10b 3" \
+    "$BIN/10_triggers/trigger_worker ex10b"
+
+echo
 echo "=== 07 rich types (C++ only, no channel) ==="
 run_solo "rich_types" "$BIN/07_rich_types/rich_types"
+
+echo
+echo "=== 11 robot loop (1 kHz control + policy, short run) ==="
+# Frames need a bigger channel than the default build has, so the smoke
+# test runs the control loop only. See 11_robot_loop/README.md for the
+# full sweep, which wants -DESHM_MAX_DATA_SIZE=4194304.
+run_pair "C++ robot     -> Python policy" ex11 \
+    "$BIN/11_robot_loop/robot_sim --channel ex11 --rate 1000 --seconds 3 --cameras 0" \
+    "python3 $HERE/11_robot_loop/policy.py --channel ex11 --hz 20 --infer-ms 10 --cameras 0 --seconds 3"
 
 echo
 echo "=== 08 benchmark (short runs) ==="

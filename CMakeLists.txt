@@ -60,9 +60,11 @@ set_target_properties(eshm_data PROPERTIES
 add_library(eshm SHARED
     src/eshm.cpp
     src/eshm_data_api.cpp
+    src/eshm_rpc.cpp
     include/eshm.h
     include/eshm_data.h
     include/eshm_data_api.h
+    include/eshm_rpc.h
 )
 
 target_include_directories(eshm PUBLIC
@@ -76,7 +78,7 @@ target_link_libraries(eshm PUBLIC eshm_data pthread rt)
 set_target_properties(eshm PROPERTIES
     VERSION ${PROJECT_VERSION}
     SOVERSION 1
-    PUBLIC_HEADER "include/eshm.h;include/eshm_data.h;include/eshm_data_api.h"
+    PUBLIC_HEADER "include/eshm.h;include/eshm_data.h;include/eshm_data_api.h;include/eshm_rpc.h"
 )
 
 # Create alias targets for use when included as subdirectory
@@ -180,6 +182,7 @@ if(ESHM_INSTALL_PYTHON)
         ${CMAKE_CURRENT_SOURCE_DIR}/py/data_handler.py
         ${CMAKE_CURRENT_SOURCE_DIR}/py/data_handler_native.py
         ${CMAKE_CURRENT_SOURCE_DIR}/py/eshm_data.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/py/rpc.py
         DESTINATION ${ESHM_PYTHON_INSTALL_DIR}/eshm
     )
     message(STATUS "ESHM: Python bindings -> ${CMAKE_INSTALL_PREFIX}/${ESHM_PYTHON_INSTALL_DIR}/eshm")

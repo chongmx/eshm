@@ -26,6 +26,10 @@ target_link_libraries(test_selftest eshm)
 add_executable(test_wakeup functional/test_wakeup.cpp)
 target_link_libraries(test_wakeup eshm rt)
 
+# Named triggers: dispatch, call vs event semantics
+add_executable(test_rpc functional/test_rpc.cpp)
+target_link_libraries(test_rpc eshm)
+
 # C API test: the ABI-stable surface used by the language bindings
 add_executable(test_c_api functional/test_c_api.cpp)
 target_link_libraries(test_c_api eshm eshm_data)
@@ -43,6 +47,8 @@ add_test(NAME SelfTest COMMAND test_selftest)
 set_tests_properties(SelfTest PROPERTIES TIMEOUT 60)
 add_test(NAME WakeupTest COMMAND test_wakeup)
 set_tests_properties(WakeupTest PROPERTIES TIMEOUT 60)
+add_test(NAME RpcTest COMMAND test_rpc)
+set_tests_properties(RpcTest PROPERTIES TIMEOUT 60)
 add_test(NAME CApiTest COMMAND test_c_api)
 set_tests_properties(CApiTest PROPERTIES TIMEOUT 60)
 add_test(NAME BasicTest COMMAND test_basic)

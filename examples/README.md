@@ -16,6 +16,8 @@ examples/
 ├── 07_rich_types/        rich_types.cpp                             (C++ only)
 ├── 08_benchmark/         bench.cpp                        bench.py
 ├── 09_integration/       master.cpp      slave.cpp        peer.py
+├── 10_triggers/          trigger_master.cpp  trigger_worker.cpp   peer.py
+├── 11_robot_loop/        robot_sim.cpp   policy.py   run_bench.sh
 └── run_all.sh            smoke-tests every pairing
 ```
 
@@ -30,6 +32,8 @@ examples/
 | 07 | [rich_types](07_rich_types/) | `Event`, `FunctionCall`, `ImageFrame` | C++ only (see below) |
 | 08 | [benchmark](08_benchmark/) | Round-trip throughput; which codec path to use | C++ ↔ Python |
 | 09 | [integration](09_integration/) | Consuming ESHM from your own CMake project | C++ ↔ Python |
+| 10 | [triggers](10_triggers/) | Register a function or event handler the peer can fire | C++ ↔ Python |
+| 11 | [robot_loop](11_robot_loop/) | Policy-in-the-loop benchmark: 1 kHz control + camera streams + Python inference | C++ ↔ Python |
 
 ## Build and run
 
@@ -86,6 +90,8 @@ Every public entry point is demonstrated somewhere:
 | `DataHandler` scalar + binary types | 02, 03 |
 | `DataHandler` Event / FunctionCall / ImageFrame | 07 |
 | CMake integration (`find_package`, submodule, FetchContent) | 09 |
+| `eshm_rpc_*` — named calls and events | 10 |
+| Multi-channel layout, latency/jitter under load | 11 |
 
 ## Five facts the examples exist to teach
 
@@ -104,6 +110,10 @@ Every public entry point is demonstrated somewhere:
 5. **`timeout_ms = 0` means "do not wait", not "wait forever".** It is the
    opposite of what `0` means in `ESHMConfig`. Pass `ESHM_TIMEOUT_INFINITE` to
    block until data arrives. (01)
+6. **Triggers are level-triggered, and two different names fired back to back
+   can coalesce.** A trigger means "state changed, go look", so handlers must
+   be idempotent; `eshm_rpc_missed()` reports anything that was overwritten
+   before it was read. (10)
 
 ## Why 07 is C++ only
 

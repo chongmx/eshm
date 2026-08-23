@@ -12,3 +12,6 @@ core.*
 # Packaging output
 dist/
 build-deb/
+
+# Alternate build trees, e.g. build-robot for examples/11 (large channels)
+build-*/

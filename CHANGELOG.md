@@ -11,6 +11,54 @@ only, `SOVERSION` stays 1), so anything that merely links against ESHM keeps
 working without recompilation. `eshm_init()` now refuses a mismatched peer with
 a diagnostic instead of failing later in a harder-to-read way.
 
+### Added - robot-loop benchmark
+
+- **`examples/11_robot_loop/`**: the shape ESHM is designed for, measured end to
+  end. C++ publishes robot state at 25 Hz - 1 kHz and camera frames at 30 fps;
+  Python reads the newest of each, simulates inference, and publishes action
+  chunks at 10-30 Hz. `run_bench.sh` sweeps the matrix and prints one table.
+- Measured on one machine (WSL2 laptop, Release), 1 kHz control with two
+  640x480 streams: **1000 Hz sustained**, jitter p50 96 us (23 us with
+  `--spin`), **1.36 ms** closed-loop p50 with inference excluded, and state
+  staleness of about half a control period. Four VGA streams (110 MB/s) cost no
+  control rate; two 720p streams (166 MB/s) drop it to 975 Hz and double jitter
+  p99, which the README explains how to fix.
+- Timestamps are `CLOCK_MONOTONIC` on both sides - Python's `time.monotonic_ns()`
+  reads the same clock - so cross-process latency is measured directly rather
+  than inferred from a round trip.
+
+### Added - named triggers
+
+- **`eshm_rpc_*`: run a function on the other side of a channel, by name.**
+  `eshm_rpc_on_call` / `eshm_rpc_on_event` register handlers,
+  `eshm_rpc_call` / `eshm_rpc_emit` fire them, and `eshm_rpc_start` runs a
+  dispatcher thread that owns a control channel of its own. A trigger carries a
+  name and nothing else - no arguments, no return value - so values travel
+  through whatever data structure the two sides already share:
+  *write the data, fire the trigger, handler reads current state.*
+- **`py/rpc.py`: the same API from Python**, as `Rpc` with `@rpc.on_call(...)`
+  and `@rpc.on_event(...)` decorators. Python never touches the control
+  channel's shared memory - the C++ dispatcher thread calls up into Python
+  through a `ctypes` callback, so there is exactly one implementation of the
+  wire format and the two sides cannot drift apart.
+- **Call vs event semantics.** A call takes exactly one handler per name
+  (re-registering replaces it) and logs an error for an unknown name; an event
+  takes any number and silently ignores an unknown name.
+- **Handlers are level-triggered.** The channel holds one value per direction,
+  so triggers coalesce under load - correctly, since the handler runs once and
+  reads the latest state. `eshm_rpc_missed()` reports the shortfall from
+  sequence gaps, so coalescing is always visible rather than silent. Two
+  *different* names fired back to back can also coalesce; that needs a
+  handshake or sequencing in your own data structure.
+- **`examples/10_triggers/`** demonstrates all of it in both directions, and
+  `test/functional/test_rpc.cpp` covers dispatch, semantics, cross-process
+  delivery and coalescing accounting.
+
+The trigger record is three scalar fields built from the five types both codecs
+already speak. `DataHandler`'s `FUNCTION_CALL`/`EVENT` tags are deliberately
+unused: they exist only in C++, and with no arguments they would carry nothing
+a string does not.
+
 ### Added - push wakeup
 
 - **`ESHM_WAKEUP_PUSH` is the default.** A blocking read now parks on a futex
@@ -63,6 +111,17 @@ a diagnostic instead of failing later in a harder-to-read way.
   it to `None`, though the C API marshals it correctly.
 - A reader parked during reconnection is now woken before the monitor unmaps
   the segment, rather than waiting on an address about to stop existing.
+- **The first message on a channel was always lost.** The read path used
+  `last_read_write_count == 0` as its "not yet baselined" sentinel, but `0` is
+  also the ordinary state of a channel nobody has written to. So the baseline
+  was re-taken on every read until the first write landed - and that first
+  write was then consumed as the baseline instead of being delivered. No amount
+  of reading early could avoid it. There is now an explicit
+  `have_read_baseline` flag, which makes the documented rule ("a reader only
+  sees writes made after its first read") actually true, and lets a reader
+  prime itself before the writer starts and then receive every message
+  including the first. Found while building the trigger example, where the
+  first sample kept vanishing.
 - **A writer killed mid-write hung every subsequent reader, permanently.**
   `seqlock_read_begin()` spins while the sequence number is odd, and a writer
   killed between `seqlock_write_begin()` and `seqlock_write_end()` leaves it

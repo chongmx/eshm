@@ -145,6 +145,51 @@ class ESHMDisconnectBehavior(IntEnum):
     NEVER = 2
 ```
 
+## Wakeup mode
+
+Blocking reads park on a futex and are woken by the peer's write - no CPU while
+idle. Opt out per handle:
+
+```python
+from eshm import ESHM, ESHMRole, ESHMWakeupMode, TIMEOUT_INFINITE
+
+with ESHM("channel", role=ESHMRole.SLAVE) as conn:
+    print(conn.wakeup_mode)                 # ESHMWakeupMode.PUSH (default)
+    data = conn.read(timeout_ms=TIMEOUT_INFINITE)   # wait until data arrives
+    conn.wakeup_mode = ESHMWakeupMode.POLL  # back to the older poll loop
+```
+
+`timeout_ms=0` means *do not wait* - the opposite of what `0` means in the
+constructor arguments, where it means *unlimited*.
+
+## Named triggers
+
+`eshm.rpc.Rpc` lets a peer run one of your functions by name. No arguments, no
+return value: write your data, then fire the trigger, and the handler reads
+current state.
+
+```python
+from eshm import ESHMRole
+from eshm.rpc import Rpc
+
+rpc = Rpc("demo", role=ESHMRole.SLAVE)      # opens "demo_ctl"
+
+@rpc.on_call("process")
+def process():                              # exactly one handler per name
+    ...
+
+@rpc.on_event("shutting_down")
+def shutting_down():                        # any number per name
+    ...
+
+with rpc:                                   # start() / stop()
+    rpc.emit("ready")
+```
+
+Handlers run on a C++ dispatcher thread, not the main thread. See
+[examples/10_triggers/](../examples/10_triggers/) for the full pattern and the
+coalescing rules.
+
 ## Examples
 
 Every example lives in the top-level [`examples/`](../examples/) directory,
@@ -161,6 +206,7 @@ that talks to the C++ side in both directions.
 | [06_large_payload](../examples/06_large_payload/) | `peer.py send\|receive` | payloads larger than the channel |
 | [08_benchmark](../examples/08_benchmark/) | `bench.py drive\|echo\|codec` | throughput, and which codec to use |
 | [09_integration](../examples/09_integration/) | `peer.py master\|slave` | attaching to an integrated C++ app |
+| [10_triggers](../examples/10_triggers/) | `peer.py master\|worker` | named calls and events across languages |
 
 Run any of them against its C++ counterpart:
 

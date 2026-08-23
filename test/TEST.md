@@ -1,5 +1,28 @@
 # ESHM Testing Guide
 
+## The suite at a glance
+
+```bash
+ctest --test-dir build --output-on-failure     # everything
+```
+
+| Test | Covers |
+|---|---|
+| `SelfTest` | Full master/slave round trip in one process |
+| `WakeupTest` | Push wakeup: futex parking, wakeup modes, the timeout contract, and that a writer killed mid-write cannot hang a reader |
+| `RpcTest` | Named triggers: dispatch, call vs event semantics, cross-process delivery, coalescing accounting |
+| `CApiTest` | The ABI-stable C surface the bindings use |
+| `BasicTest`, `ErrorHandlingTest` | Core API and error paths |
+| `DataHandlerTest` | The ASN.1 codec |
+| `PythonNativeApiTest` | The Python bindings against the C API |
+
+Examples are exercised separately, in both language directions:
+
+```bash
+./examples/run_all.sh
+```
+
+
 ## C++ ↔ Python Interoperability
 
 ### ✅ CONFIRMED WORKING

@@ -345,6 +345,32 @@ Absolute numbers vary by an order of magnitude across machines - run
 `./build/examples/08_benchmark/bench` on your own hardware before designing
 around a figure. The ratios are the portable part.
 
+## Robot / policy-in-the-loop performance
+
+The shape ESHM is designed for - C++ driving a robot and cameras, Python
+running a slow neural policy - is benchmarked end to end in
+[examples/11_robot_loop/](examples/11_robot_loop/). Measured on one machine
+(WSL2 laptop, Release), 1 kHz control with two 640x480 camera streams:
+
+| | Result |
+|---|---|
+| Control loop | **1000 Hz sustained**, jitter p50 96 us (23 us with `--spin`) |
+| Camera streams | 4 x 640x480 @ 30 fps = **110 MB/s** with no control-rate loss |
+| Closed loop, inference excluded | **1.36 ms** p50, 2.67 ms p99 |
+| State staleness at the policy | ~half a control period (0.84 ms at 1 kHz) |
+
+The closed loop is state written -> policy read -> inferred -> action read
+back. With any realistic inference cost the transport is 3-10% of the loop.
+Jitter p99 (~570 us) is the OS scheduler, not the channel.
+
+Run it on your own hardware - absolute numbers do not transfer:
+
+```bash
+cmake -S . -B build-robot -DCMAKE_BUILD_TYPE=Release -DESHM_MAX_DATA_SIZE=4194304
+cmake --build build-robot -j$(nproc)
+./examples/11_robot_loop/run_bench.sh build-robot
+```
+
 ## Configuration Options
 
 | Parameter | Description | Default |

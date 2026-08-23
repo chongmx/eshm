@@ -87,8 +87,15 @@ struct ESHMHandle {
     uint64_t stale_counter;
     volatile bool remote_is_stale;
 
-    // Read tracking - remember last write_count we read from
+    // Read tracking - remember last write_count we read from.
+    //
+    // have_read_baseline must be a separate flag: write_count == 0 is a
+    // perfectly ordinary state (a channel nobody has written to yet), so using
+    // last_read_write_count == 0 as the "not yet baselined" sentinel meant the
+    // baseline was re-taken on every read until the first write landed - and
+    // that first write was then consumed as the baseline instead of delivered.
     uint64_t last_read_write_count;
+    bool have_read_baseline;
 
     // Local statistics
     uint64_t last_master_heartbeat;
@@ -383,10 +390,11 @@ static void* monitor_thread_func(void* arg) {
                             // dead master's final value. Leaving it set makes
                             // eshm_read_timeout() discard everything the new
                             // master writes until it passes that old total, so
-                            // a "successful" reconnect delivers no data. Zero
-                            // it: the next read re-baselines against the new
-                            // channel, exactly as the first read after init does.
+                            // a "successful" reconnect delivers no data. Clear
+                            // the baseline: the next read re-takes it against
+                            // the new channel, as the first read after init does.
                             handle->last_read_write_count = 0;
+                            handle->have_read_baseline = false;
 
                             continue;
                         }
@@ -511,6 +519,7 @@ ESHMHandle* eshm_init(const ESHMConfig* config) {
     handle->shm_data = NULL;
     handle->threads_running = false;
     handle->last_read_write_count = 0;  // Initialize read tracking
+    handle->have_read_baseline = false;
     handle->wakeup_mode = ESHM_WAKEUP_PUSH;  // Push wakeup is the default
 
     // Generate POSIX SHM name (e.g., "/eshm_demo")
@@ -918,9 +927,14 @@ int eshm_read_timeout(ESHMHandle* handle, void* buffer, size_t buffer_size,
 
     // Use persistent tracking across calls instead of resetting each time
     // This ensures we don't miss messages that arrived between calls
-    if (handle->last_read_write_count == 0) {
-        // First read - initialize to current write count
+    if (!handle->have_read_baseline) {
+        // First read on this channel: start from where it is now, so a reader
+        // joining a long-running channel is not handed a backlog of one stale
+        // value. Taking the baseline here - rather than when write_count is
+        // first seen non-zero - is what lets a reader prime itself before the
+        // writer starts, and then receive every message including the first.
         handle->last_read_write_count = channel->write_count;
+        handle->have_read_baseline = true;
     }
 
     while (true) {

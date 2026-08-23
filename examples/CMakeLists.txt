@@ -16,6 +16,8 @@ add_subdirectory(06_large_payload)
 add_subdirectory(07_rich_types)
 add_subdirectory(08_benchmark)
 add_subdirectory(09_integration)
+add_subdirectory(10_triggers)
+add_subdirectory(11_robot_loop)
 
 # 06_large_payload needs a channel bigger than the 4 KB default to show frames
 # moving in one write; it degrades gracefully and says so when built small.

@@ -8,10 +8,16 @@ the peer's write. On the round-trip benchmark that is the difference between
 **5,492 and 1,981,817 round trips per second** between two C++ peers,
 and 5,235 vs 205,882 between C++ and Python.
 
-It also reorganises the examples into nine numbered directories that each pair
-a C++ program with a Python peer, and fixes five bugs that this work
-uncovered — including one that meant **C++ → Python decoding had never worked**
-despite being documented as supported.
+It adds **named triggers** (`eshm_rpc_*`): register a function or an event
+handler, and the peer fires it by name, across the language boundary in either
+direction.
+
+It also reorganises the examples into eleven numbered directories that each pair
+a C++ program with a Python peer - including a policy-in-the-loop robot
+benchmark - and fixes six bugs that this work uncovered —
+including one that meant **C++ → Python decoding had never worked** despite
+being documented as supported, and one that silently swallowed **the first
+message on every channel**.
 
 ## Upgrading from 1.0.0
 
@@ -85,6 +91,88 @@ bootstrap the first. A `pthread_cond_t` in shared memory can, but hangs when
 its peer dies, which is the exact failure ESHM's lock-free design exists to
 survive. A futex waiter whose waker dies simply times out.
 
+## Robot loop: what to expect in a real system
+
+[examples/11_robot_loop/](examples/11_robot_loop/) benchmarks the shape the
+library is built for - C++ driving a robot and cameras, Python running a slow
+policy - rather than a synthetic ping-pong.
+
+Measured on one machine (WSL2 laptop, Release), 1 kHz control with two 640x480
+camera streams:
+
+| | Result |
+|---|---|
+| Control loop | **1000 Hz sustained**, jitter p50 96 us (23 us with `--spin`) |
+| Camera streams | 4 x 640x480 @ 30 fps = **110 MB/s**, no control-rate loss |
+| Closed loop, inference excluded | **1.36 ms** p50, 2.67 ms p99 |
+| State staleness at the policy | ~half a control period (0.84 ms at 1 kHz) |
+
+Closed loop means state written -> policy read -> inferred -> action read back.
+With any realistic inference cost, transport is 3-10% of the loop; the policy
+dominates. Jitter p99 (~570 us) is the OS scheduler, not the channel.
+
+Two findings worth carrying into a design:
+
+- **State staleness tracks the control period**, not the transport. A policy
+  reading at 20 Hz off a 25 Hz control loop sees state ~20 ms old; off a 1 kHz
+  loop, ~0.8 ms. Raise the control rate, not the link speed.
+- **Watch total camera bandwidth, not camera count.** 110 MB/s was free;
+  166 MB/s (two 720p streams) cost 25 Hz of control rate and doubled jitter p99,
+  because the same thread memcpys frames and publishes state. Publishing frames
+  from their own thread fixes it.
+
+```bash
+cmake -S . -B build-robot -DCMAKE_BUILD_TYPE=Release -DESHM_MAX_DATA_SIZE=4194304
+cmake --build build-robot -j$(nproc)
+./examples/11_robot_loop/run_bench.sh build-robot
+```
+
+## Named triggers
+
+Run a function on the other side of a channel, by name — in either language.
+
+```c
+EshmRpc* rpc = eshm_rpc_create("demo", ESHM_ROLE_SLAVE);   /* opens demo_ctl */
+eshm_rpc_on_call (rpc, "process",       on_process,       &ctx);
+eshm_rpc_on_event(rpc, "shutting_down", on_shutting_down, &ctx);
+eshm_rpc_start(rpc);
+eshm_rpc_emit(rpc, "worker_ready");
+```
+
+```python
+rpc = Rpc("demo", role=ESHMRole.SLAVE)
+
+@rpc.on_call("process")
+def process(): ...
+
+with rpc:
+    rpc.emit("worker_ready")
+```
+
+A trigger carries a name and nothing else — no arguments, no return value.
+Values travel through whatever data structure the two sides already share:
+
+```
+write the data  ->  fire the trigger  ->  handler reads current state
+```
+
+That makes handlers **level-triggered**, which matters because the channel
+holds one value per direction: under load, triggers coalesce. For a
+level-triggered handler that is correct — it runs once and sees the latest
+state, which is what every coalesced firing wanted. `eshm_rpc_missed()` reports
+the shortfall from sequence gaps, so loss is visible rather than silent.
+
+The sharp edge: coalescing is harmless for repeated firings of the *same* name,
+but two *different* names fired back to back are two distinct signals and
+nothing queues them. Use a handshake, or sequence in your own data structure.
+
+Python never touches the control channel's shared memory. A C++ dispatcher
+thread inside `libeshm` owns it and calls up into Python through a `ctypes`
+callback — one implementation of the wire format, in C++. Handlers therefore
+run on the dispatcher thread, not your main thread.
+
+See [examples/10_triggers/](examples/10_triggers/) for both directions.
+
 ## Protocol v3
 
 Four fields, all carved from existing padding so **no struct changed size**
@@ -126,6 +214,14 @@ count. A new master's channel starts at 0, so everything it wrote was discarded
 until it passed the old total — the slave logged `RECONNECTED`, then went
 silent.
 
+**The first message on a channel was always lost.** The read path used
+`last_read_write_count == 0` as its "not yet baselined" sentinel, but `0` is
+also the ordinary state of a channel nobody has written to. The baseline was
+therefore re-taken on every read until the first write landed, and that write
+was consumed as the baseline instead of delivered — no amount of reading early
+could avoid it. An explicit `have_read_baseline` flag makes the documented rule
+true and lets a reader prime itself before the writer starts.
+
 **BINARY was dropped by the native Python path.** `ESHMData.write_data()`
 raised on `DataType.BINARY` and `read_data()` decoded it to `None`, though the
 C API marshals it correctly.
@@ -156,6 +252,8 @@ that talks to it **in both directions**.
 | 07 | `rich_types` | `Event`/`FunctionCall`/`ImageFrame` (C++ only) |
 | 08 | `benchmark` | Round-trip rate; `--poll` A/Bs push against polling |
 | 09 | `integration` | `find_package` / submodule / FetchContent |
+| 10 | `triggers` | Named calls and events across the language boundary |
+| 11 | `robot_loop` | Policy-in-the-loop benchmark: control rate, jitter, closed-loop latency |
 
 ```bash
 ./examples/run_all.sh      # every C++/Python pairing, both directions
@@ -175,9 +273,9 @@ existed — so on a new, empty channel it answers *alive*. Use `slave_alive` /
 
 ## Verification
 
-- 8/8 ctest tests pass, including the new `WakeupTest`
-- 9/9 example pairings pass in both directions (`examples/run_all.sh`)
-- All 9 example directories build standalone against an installed ESHM
+- 9/9 ctest tests pass, including the new `WakeupTest` and `RpcTest`
+- 12/12 example pairings pass in both directions (`examples/run_all.sh`)
+- All 11 example directories build standalone against an installed ESHM
 - Reconnection verified across 3 master restarts in both language directions
 - Layout sizes verified for `ESHM_MAX_DATA_SIZE` 4096 and 8192
 

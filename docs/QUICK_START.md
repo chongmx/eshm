@@ -1,5 +1,15 @@
 # ESHM Quick Start Guide
 
+> **Two things worth knowing before you start**
+>
+> - In the read functions `timeout_ms = 0` means *do not wait at all*. That is
+>   the opposite of what `0` means in `ESHMConfig` (there it means *unlimited*).
+>   To block until data arrives, pass `ESHM_TIMEOUT_INFINITE`.
+> - Blocking reads park on a futex and are woken by the peer's write, so waiting
+>   costs no CPU. `eshm_set_wakeup_mode(handle, ESHM_WAKEUP_POLL)` restores the
+>   older polling behaviour if you would rather drive your own loop.
+
+
 ## Build
 
 ### Standard Build

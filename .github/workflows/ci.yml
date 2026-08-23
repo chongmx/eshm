@@ -1,0 +1,47 @@
+name: CI
+
+# ESHM is Linux-only by design, not just untested elsewhere: push wakeup
+# (src/eshm.cpp) calls the raw Linux `futex` syscall directly
+# (<linux/futex.h>, SYS_futex), and eshm_cuda.cpp uses abstract AF_UNIX
+# sockets + dlopen(). Neither exists on Windows, and macOS has no
+# linux/futex.h either - so this matrix is gcc/clang on Linux, not a
+# multi-OS matrix. See README.md's Requirements section.
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler:
+          - { cc: gcc, cxx: g++ }
+          - { cc: clang, cxx: clang++ }
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure
+        # ESHM_ENABLE_CUDA defaults to AUTO and finds no CUDA toolkit on a
+        # standard GitHub-hosted runner, so eshm_cuda is correctly skipped
+        # here rather than special-cased - this only verifies the no-GPU
+        # build path, not the GPU path itself (no GPU on these runners).
+        run: >
+          cmake -S . -B build
+          -DCMAKE_C_COMPILER=${{ matrix.compiler.cc }}
+          -DCMAKE_CXX_COMPILER=${{ matrix.compiler.cxx }}
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Test
+        working-directory: build
+        run: ctest --output-on-failure
+
+      - name: Examples smoke test (C++ <-> Python, both directions)
+        run: ./examples/run_all.sh

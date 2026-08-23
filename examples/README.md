@@ -75,6 +75,8 @@ Every public entry point is demonstrated somewhere:
 | `eshm_get_stats` (all 13 fields) | 04 |
 | `eshm_get_role`, `eshm_check_remote_alive`, `eshm_update_heartbeat` | 04 |
 | `eshm_error_string` and the error codes | 01, 05, 06 |
+| `eshm_set_wakeup_mode`, `eshm_get_wakeup_mode` | 08 (`--poll`) |
+| `ESHM_TIMEOUT_INFINITE` | 01 (documented), `test_wakeup` |
 | `ESHM_ROLE_MASTER` / `SLAVE` | 01 |
 | `ESHM_ROLE_AUTO` | 05 (`--auto`) |
 | `disconnect_behavior`: IMMEDIATELY / ON_TIMEOUT / NEVER | 05 (`--behavior`) |
@@ -85,7 +87,7 @@ Every public entry point is demonstrated somewhere:
 | `DataHandler` Event / FunctionCall / ImageFrame | 07 |
 | CMake integration (`find_package`, submodule, FetchContent) | 09 |
 
-## Four facts the examples exist to teach
+## Five facts the examples exist to teach
 
 1. **Start the master first.** A slave `eshm_init` fails immediately if the
    segment does not exist. Retry — every consumer here does. (01)
@@ -99,6 +101,9 @@ Every public entry point is demonstrated somewhere:
    "not yet detected as stale", which is true on an empty channel. Use
    `slave_alive` / `master_alive` from `eshm_get_stats()` to ask whether anyone
    is there. (04)
+5. **`timeout_ms = 0` means "do not wait", not "wait forever".** It is the
+   opposite of what `0` means in `ESHMConfig`. Pass `ESHM_TIMEOUT_INFINITE` to
+   block until data arrives. (01)
 
 ## Why 07 is C++ only
 

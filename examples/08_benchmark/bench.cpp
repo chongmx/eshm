@@ -5,11 +5,13 @@
 // the next, so the number reported is complete round trips per second - not
 // one-way writes, which are much faster and much less informative.
 //
-// Demonstrates: how the channel behaves under load, and what the language and
-//               codec choice on the far end actually costs.
+// Demonstrates: how the channel behaves under load, what the language and
+//               codec choice on the far end costs, and what push wakeup is
+//               worth (--poll selects the old polling behaviour, so the two
+//               can be compared back to back on the same machine).
 //
-// Run:   ./bench drive [channel] [--seconds S] [--size N]
-//        ./bench echo  [channel]
+// Run:   ./bench drive [channel] [--seconds S] [--size N] [--poll]
+//        ./bench echo  [channel] [--poll]
 //
 // Pairs with `python3 bench.py drive|echo <channel>` in either direction.
 
@@ -28,7 +30,7 @@ namespace {
 volatile sig_atomic_t g_running = 1;
 void stop(int) { g_running = 0; }
 
-int drive(const char* channel, double seconds, size_t size) {
+int drive(const char* channel, double seconds, size_t size, bool poll) {
     ESHMConfig config = eshm_default_config(channel);
     config.role = ESHM_ROLE_MASTER;
 
@@ -37,7 +39,9 @@ int drive(const char* channel, double seconds, size_t size) {
         std::fprintf(stderr, "bench: could not create channel '%s'\n", channel);
         return 1;
     }
-    std::printf("bench: channel '%s' is live, waiting for an echo peer...\n", channel);
+    if (poll) eshm_set_wakeup_mode(handle, ESHM_WAKEUP_POLL);
+    std::printf("bench: channel '%s' is live, waiting for an echo peer... (wakeup: %s)\n",
+                channel, poll ? "POLL" : "PUSH");
     std::fflush(stdout);
 
     for (int i = 0; g_running && i < 300; ++i) {
@@ -85,7 +89,7 @@ int drive(const char* channel, double seconds, size_t size) {
     return 0;
 }
 
-int echo(const char* channel) {
+int echo(const char* channel, bool poll) {
     ESHMConfig config = eshm_default_config(channel);
     config.role = ESHM_ROLE_SLAVE;
     config.auto_cleanup = false;
@@ -101,7 +105,9 @@ int echo(const char* channel) {
         std::fprintf(stderr, "bench: no channel '%s' - is a driver running?\n", channel);
         return 1;
     }
-    std::printf("bench: echoing on '%s' (Ctrl-C to stop)\n", channel);
+    if (poll) eshm_set_wakeup_mode(handle, ESHM_WAKEUP_POLL);
+    std::printf("bench: echoing on '%s' (Ctrl-C to stop) (wakeup: %s)\n",
+                channel, poll ? "POLL" : "PUSH");
     std::fflush(stdout);
 
     std::vector<uint8_t> buffer(ESHM_MAX_DATA_SIZE);
@@ -133,25 +139,28 @@ int main(int argc, char** argv) {
     const char* channel = "bench";
     double seconds = 5.0;
     size_t size = 256;
+    bool poll = false;
 
     for (int i = 2; i < argc; ++i) {
         const std::string arg = argv[i];
         const bool has_next = (i + 1 < argc);
         if (arg == "--seconds" && has_next)      seconds = std::atof(argv[++i]);
         else if (arg == "--size" && has_next)    size = std::strtoul(argv[++i], nullptr, 10);
+        else if (arg == "--poll")                poll = true;
         else if (!arg.empty() && arg[0] != '-')  channel = argv[i];
     }
 
     std::signal(SIGINT, stop);
     std::signal(SIGTERM, stop);
 
-    if (mode == "drive") return drive(channel, seconds, size);
-    if (mode == "echo")  return echo(channel);
+    if (mode == "drive") return drive(channel, seconds, size, poll);
+    if (mode == "echo")  return echo(channel, poll);
 
     std::fprintf(stderr,
-                 "usage: %s drive|echo [channel] [--seconds S] [--size N]\n\n"
+                 "usage: %s drive|echo [channel] [--seconds S] [--size N] [--poll]\n\n"
                  "  drive   master role: sends and waits for each echo, reports the rate\n"
-                 "  echo    slave role:  echoes whatever arrives\n\n"
+                 "  echo    slave role:  echoes whatever arrives\n"
+                 "  --poll  use ESHM_WAKEUP_POLL instead of the default push wakeup\n\n"
                  "Pairs with `python3 bench.py drive|echo <channel>`.\n",
                  argv[0]);
     return 2;

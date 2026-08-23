@@ -19,22 +19,26 @@ from .eshm import (
     ESHMRole,
     ESHMError,
     ESHMDisconnectBehavior,
+    ESHMWakeupMode,
     ESHMConfig,
     ESHMStats,
+    TIMEOUT_INFINITE,
     library_path,
 )
 
 # Pure-Python ASN.1 DER codec, wire compatible with the C++ DataHandler.
 from .data_handler import DataHandler, DataItem, DataType
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __all__ = [
     "ESHM",
     "ESHMRole",
     "ESHMError",
     "ESHMDisconnectBehavior",
+    "ESHMWakeupMode",
     "ESHMConfig",
     "ESHMStats",
+    "TIMEOUT_INFINITE",
     "library_path",
     "DataHandler",
     "DataItem",

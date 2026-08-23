@@ -38,11 +38,32 @@ class ESHMError(IntEnum):
     NOT_INITIALIZED = -14
     ROLE_MISMATCH = -15
 
+class ESHMWakeupMode(IntEnum):
+    """How a blocking read waits for data.
+
+    PUSH (the default) parks on a futex inside the shared segment and is woken
+    by the peer's write - microsecond-class latency and no CPU while idle.
+    POLL restores the older behaviour, an internal poll loop that still honours
+    timeout_ms, for callers who would rather drive their own loop.
+
+    Affects reading only, and only this endpoint: a writer wakes a parked peer
+    whatever mode the writer itself is in.
+    """
+    PUSH = 0
+    POLL = 1
+
+
 class ESHMDisconnectBehavior(IntEnum):
     """Disconnect behavior on stale master detection"""
     IMMEDIATELY = 0
     ON_TIMEOUT = 1
     NEVER = 2
+
+#: Wait until data arrives. Note the asymmetry with the ESHM() constructor
+#: arguments, where 0 means "unlimited" (reconnect_wait_ms,
+#: max_reconnect_attempts); in the read methods 0 means "do not wait at all".
+TIMEOUT_INFINITE = 0xFFFFFFFF
+
 
 class ESHMConfig(ctypes.Structure):
     """ESHM configuration structure"""
@@ -291,6 +312,13 @@ class ESHM:
         lib.eshm_error_string.argtypes = [ctypes.c_int]
         lib.eshm_error_string.restype = ctypes.c_char_p
 
+        # eshm_set_wakeup_mode / eshm_get_wakeup_mode
+        lib.eshm_set_wakeup_mode.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        lib.eshm_set_wakeup_mode.restype = ctypes.c_int
+
+        lib.eshm_get_wakeup_mode.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
+        lib.eshm_get_wakeup_mode.restype = ctypes.c_int
+
     def write(self, data: bytes) -> None:
         """
         Write data to shared memory
@@ -311,7 +339,12 @@ class ESHM:
 
         Args:
             buffer_size: Maximum buffer size to read
-            timeout_ms: Optional custom timeout in milliseconds (uses extended API)
+            timeout_ms: Optional custom timeout in milliseconds (uses extended API):
+                None             - the simple API's default 1000 ms
+                0                - do not wait; raises RuntimeError("No data available")
+                TIMEOUT_INFINITE - wait until data arrives
+                (0 means the opposite here to what it means in the constructor,
+                 where 0 means "unlimited")
 
         Returns:
             Data read as bytes (can be empty for event trigger)
@@ -499,6 +532,25 @@ class ESHM:
         if ret != ESHMError.SUCCESS:
             raise RuntimeError(f"Failed to get role: {self._error_string(ret)}")
         return ESHMRole(role.value)
+
+    @property
+    def wakeup_mode(self) -> ESHMWakeupMode:
+        """How blocking reads on this handle wait for data.
+
+        Returns:
+            ESHMWakeupMode.PUSH or ESHMWakeupMode.POLL
+        """
+        mode = ctypes.c_int()
+        ret = ESHM._lib.eshm_get_wakeup_mode(self._handle, ctypes.byref(mode))
+        if ret != ESHMError.SUCCESS:
+            raise RuntimeError(f"Failed to get wakeup mode: {self._error_string(ret)}")
+        return ESHMWakeupMode(mode.value)
+
+    @wakeup_mode.setter
+    def wakeup_mode(self, mode: ESHMWakeupMode) -> None:
+        ret = ESHM._lib.eshm_set_wakeup_mode(self._handle, int(mode))
+        if ret != ESHMError.SUCCESS:
+            raise RuntimeError(f"Failed to set wakeup mode: {self._error_string(ret)}")
 
     def is_remote_alive(self) -> bool:
         """

@@ -59,11 +59,14 @@ cmake -DESHM_HEARTBEAT_INTERVAL_MS=5 ..
 ```
 Total Shared Memory Layout:
 ┌─────────────────────────────────────────┐
-│ ESHMHeader (64 bytes, aligned)          │
+│ ESHMHeader (128 bytes, aligned 64)      │
 │  - Magic number, version                │
 │  - Master/slave heartbeat counters      │
 │  - PIDs, alive flags                    │
-│  - Stale threshold                      │
+│  - Stale threshold, master generation   │
+│  - features       (4 bytes)   [v3]      │
+│  - layout_size    (4 bytes)   [v3]      │
+│  - Padding (24 bytes)                   │
 └─────────────────────────────────────────┘
 ┌─────────────────────────────────────────┐
 │ master_to_slave Channel (aligned 64)    │
@@ -71,29 +74,57 @@ Total Shared Memory Layout:
 │  - Data size (4 bytes)                  │
 │  - Data buffer (ESHM_MAX_DATA_SIZE)     │
 │  - Write/read counters (16 bytes)       │
-│  - Padding (48 bytes)                   │
+│  - wake_seq       (4 bytes)   [v3]      │
+│  - waiters        (4 bytes)   [v3]      │
+│  - Padding (40 bytes)                   │
 └─────────────────────────────────────────┘
 ┌─────────────────────────────────────────┐
 │ slave_to_master Channel (aligned 64)    │
-│  - Sequence lock (4 bytes)              │
-│  - Data size (4 bytes)                  │
-│  - Data buffer (ESHM_MAX_DATA_SIZE)     │
-│  - Write/read counters (16 bytes)       │
-│  - Padding (48 bytes)                   │
+│  - (same layout as above)               │
 └─────────────────────────────────────────┘
 ```
+
+## Protocol version 3
+
+`ESHM_VERSION` is 3. The four fields marked `[v3]` were carved out of existing
+padding, so **no struct changed size** — `static_assert`s in `src/eshm.cpp`
+enforce that, because a peer built from a different revision of the header
+would otherwise read every field at the wrong offset.
+
+| Field | Purpose |
+|---|---|
+| `wake_seq` | The futex word for push wakeup. The writer bumps it; a parked reader waits on it. One per direction, so a master's write never wakes the master. |
+| `waiters` | How many readers are parked. The writer skips the `FUTEX_WAKE` syscall when this is zero, which keeps the hot path syscall-free. |
+| `features` | Capability bitmask (`ESHM_FEATURE_*`). A monotonic version cannot say "supports X independently of Y"; this can, so future additive features need no version bump. |
+| `layout_size` | `sizeof(ESHMData)` of whoever created the segment. |
+
+`eshm_init()` validates magic, `version` and `layout_size` when attaching to an
+existing segment, and refuses a mismatch with a diagnostic. Before 1.1.0 none
+of these were checked: two peers built with different `ESHM_MAX_DATA_SIZE`
+would attach happily, then **SIGBUS** on the first channel access when the
+smaller segment was mapped by the larger build. That failure is now a clean
+error at attach time.
+
+Because the meaning of those padding bytes changed, a v2 peer and a v3 peer
+must not share a segment — rebuild both ends.
 
 ## Size Calculations
 
 Default configuration (ESHM_MAX_DATA_SIZE=4096):
-- Header: 64 bytes
-- Each channel: ~4168 bytes (4096 + metadata + padding)
-- **Total: ~8576 bytes**
+- Header: 128 bytes
+- Each channel: 4224 bytes (4096 + metadata + padding, rounded to a cache line)
+- **Total: 8576 bytes**
 
 Custom configuration (ESHM_MAX_DATA_SIZE=8192):
-- Header: 64 bytes
-- Each channel: ~8264 bytes (8192 + metadata + padding)
-- **Total: ~16592 bytes**
+- Header: 128 bytes
+- Each channel: 8320 bytes
+- **Total: 16768 bytes**
+
+Print the exact figure for any build with:
+
+```c
+printf("%zu\n", sizeof(ESHMData));
+```
 
 ## Usage Examples
 

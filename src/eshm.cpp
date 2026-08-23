@@ -10,6 +10,58 @@
 #include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <limits.h>
+#include <linux/futex.h>
+#include <sys/syscall.h>
+
+// The shared layout is append-only into padding: repurposing those bytes must
+// never change a struct size, or a peer built from a different revision of this
+// header would read every field at the wrong offset.
+static_assert(sizeof(ESHMChannel) % 64 == 0, "ESHMChannel must stay cache-line sized");
+static_assert(sizeof(ESHMHeader) == 128, "ESHMHeader size changed - v3 layout broken");
+
+// Push wakeup.
+//
+// A futex on a word inside the shared mapping, rather than an eventfd: an fd is
+// an index into one process's table and cannot be published through shared
+// memory, and a pthread condvar in shm hangs when its peer dies - the exact
+// failure ESHM's seqlock/heartbeat design exists to survive. A futex waiter
+// whose waker dies simply times out, and there is nothing to clean up.
+//
+// FUTEX_PRIVATE_FLAG is deliberately absent: private futexes are keyed by the
+// address space, so they silently never wake across processes. The shared
+// variant keys by physical page, which is what makes this work on MAP_SHARED.
+#define ESHM_WAKE_SPINS      1000u   // spin before parking (~ a few microseconds)
+#define ESHM_WAKE_RECHECK_MS 50u     // cap on one park, so peer death surfaces
+
+static inline void cpu_relax(void) {
+#if defined(__x86_64__) || defined(__i386__)
+    __builtin_ia32_pause();
+#elif defined(__aarch64__)
+    __asm__ __volatile__("yield" ::: "memory");
+#endif
+}
+
+static int futex_wait(volatile uint32_t* addr, uint32_t expected, uint32_t timeout_ms) {
+    struct timespec ts;
+    ts.tv_sec  = (time_t)(timeout_ms / 1000u);
+    ts.tv_nsec = (long)(timeout_ms % 1000u) * 1000000L;
+    return (int)syscall(SYS_futex, (uint32_t*)addr, FUTEX_WAIT, expected, &ts, NULL, 0);
+}
+
+static int futex_wake_all(volatile uint32_t* addr) {
+    return (int)syscall(SYS_futex, (uint32_t*)addr, FUTEX_WAKE, INT_MAX, NULL, NULL, 0);
+}
+
+// Publish new data on a channel and wake anyone parked on it. The wake syscall
+// is skipped unless a reader has actually registered, which keeps the hot
+// producer/consumer path syscall-free.
+static inline void channel_signal(ESHMChannel* channel) {
+    __atomic_add_fetch(&channel->wake_seq, 1, __ATOMIC_RELEASE);
+    if (__atomic_load_n(&channel->waiters, __ATOMIC_ACQUIRE) != 0) {
+        futex_wake_all(&channel->wake_seq);
+    }
+}
 
 // Compiler memory barriers
 #define smp_mb() __sync_synchronize()
@@ -41,6 +93,11 @@ struct ESHMHandle {
     // Local statistics
     uint64_t last_master_heartbeat;
     uint64_t last_slave_heartbeat;
+
+    // How blocking reads wait. Read by the reading thread, written by
+    // eshm_set_wakeup_mode() from any thread; a stale read costs at most one
+    // extra wait cycle, so a plain volatile is enough.
+    volatile enum ESHMWakeupMode wakeup_mode;
 };
 
 // Sequence lock functions
@@ -62,6 +119,50 @@ static inline uint32_t seqlock_read_begin(const struct ESHMSeqLock* lock) {
         smp_rmb();
     } while (seq & 1);  // Wait if write is in progress
     return seq;
+}
+
+// Defined below; declared here because the bounded seqlock wait needs a clock.
+static uint64_t get_time_ms(void);
+
+// How long a reader will wait for a writer to finish before concluding that it
+// never will. A live writer holds the sequence odd only for one memcpy, so this
+// is orders of magnitude more than any healthy write needs - even with a very
+// large ESHM_MAX_DATA_SIZE.
+#define ESHM_SEQLOCK_STALL_MS 100u
+
+// Bounded form of seqlock_read_begin().
+//
+// A writer killed between seqlock_write_begin() and seqlock_write_end() leaves
+// the sequence odd permanently, and the unbounded loop above then spins until
+// the reading process is killed. That is the one failure mode this library is
+// built to survive, so the read path uses this instead: give up after
+// ESHM_SEQLOCK_STALL_MS and let the caller fall through to its normal timeout,
+// where stale detection and reconnection can do their job.
+//
+// Returns true and stores an even sequence number, or false if the writer
+// appears to have died mid-write.
+static inline bool seqlock_read_begin_bounded(const struct ESHMSeqLock* lock,
+                                              uint32_t* out_seq) {
+    uint64_t deadline = 0;
+    for (uint32_t i = 0; ; ++i) {
+        uint32_t seq = lock->sequence;
+        smp_rmb();
+        if ((seq & 1) == 0) {
+            *out_seq = seq;
+            return true;
+        }
+        // Only consult the clock occasionally: this is the hot path when a
+        // writer is genuinely mid-write, and it should stay cheap.
+        if ((i & 0xFF) == 0xFF) {
+            uint64_t now = get_time_ms();
+            if (deadline == 0) {
+                deadline = now + ESHM_SEQLOCK_STALL_MS;
+            } else if (now >= deadline) {
+                return false;
+            }
+        }
+        cpu_relax();
+    }
 }
 
 static inline bool seqlock_read_retry(const struct ESHMSeqLock* lock, uint32_t seq) {
@@ -107,6 +208,11 @@ static int init_shm_data(ESHMData* data, uint32_t stale_threshold_ms) {
     data->header.master_alive = 0;
     data->header.slave_alive = 0;
     data->header.stale_threshold = stale_threshold_ms;
+    data->header.features = ESHM_FEATURE_FUTEX_WAKE;
+    // Recorded so a peer built with a different ESHM_MAX_DATA_SIZE is
+    // rejected at attach instead of mmapping past end-of-file and taking
+    // SIGBUS on its first channel access.
+    data->header.layout_size = (uint32_t)sizeof(ESHMData);
     
     int ret = init_channel(&data->master_to_slave);
     if (ret != ESHM_SUCCESS) {
@@ -220,6 +326,13 @@ static void* monitor_thread_func(void* arg) {
                 if (old_shm_data) {
                     handle->shm_data = NULL;
                     __sync_synchronize();  // Memory barrier to ensure NULL is visible to other threads
+
+                    // Kick any reader parked on a futex word inside the
+                    // mapping we are about to drop. Without this it would
+                    // sit there until its own timeout, waiting on an
+                    // address that is about to stop existing.
+                    futex_wake_all(&old_shm_data->master_to_slave.wake_seq);
+                    futex_wake_all(&old_shm_data->slave_to_master.wake_seq);
 
                     // Delay to allow other threads to see the NULL and stop accessing
                     // Heartbeat thread runs every 1ms, monitor checks every 10ms
@@ -398,6 +511,7 @@ ESHMHandle* eshm_init(const ESHMConfig* config) {
     handle->shm_data = NULL;
     handle->threads_running = false;
     handle->last_read_write_count = 0;  // Initialize read tracking
+    handle->wakeup_mode = ESHM_WAKEUP_PUSH;  // Push wakeup is the default
 
     // Generate POSIX SHM name (e.g., "/eshm_demo")
     generate_shm_name(handle->shm_name, sizeof(handle->shm_name), config->shm_name);
@@ -595,9 +709,41 @@ ESHMHandle* eshm_init(const ESHMConfig* config) {
             return NULL;
         }
     } else {
-        // Validate existing SHM
-        if (handle->shm_data->header.magic != ESHM_MAGIC) {
-            fprintf(stderr, "[ESHM] Invalid SHM magic number\n");
+        // Validate existing SHM.
+        //
+        // Only the header is touched here. It lives at offset 0, inside the
+        // first page, so it is safe to read even when the creator's segment is
+        // smaller than our sizeof(ESHMData) - which is exactly the case
+        // layout_size exists to catch, before anything touches a channel and
+        // faults past end-of-file.
+        const uint32_t magic   = handle->shm_data->header.magic;
+        const uint32_t version = handle->shm_data->header.version;
+        const uint32_t layout  = handle->shm_data->header.layout_size;
+
+        const char* reject = NULL;
+        char detail[192];
+        detail[0] = '\0';
+
+        if (magic != ESHM_MAGIC) {
+            reject = "invalid magic number";
+            snprintf(detail, sizeof(detail), "got 0x%08X, expected 0x%08X",
+                     magic, (unsigned)ESHM_MAGIC);
+        } else if (version != ESHM_VERSION) {
+            reject = "protocol version mismatch";
+            snprintf(detail, sizeof(detail),
+                     "segment is v%u, this build speaks v%u - rebuild both ends",
+                     version, (unsigned)ESHM_VERSION);
+        } else if (layout != (uint32_t)sizeof(ESHMData)) {
+            reject = "memory layout mismatch";
+            snprintf(detail, sizeof(detail),
+                     "segment is %u bytes, this build expects %zu "
+                     "- ESHM_MAX_DATA_SIZE differs between the two builds",
+                     layout, sizeof(ESHMData));
+        }
+
+        if (reject) {
+            fprintf(stderr, "[ESHM] Cannot attach to '%s': %s (%s)\n",
+                    handle->shm_name, reject, detail);
             munmap(handle->shm_data, sizeof(ESHMData));
             close(handle->shm_fd);
             free((void*)handle->config.shm_name);
@@ -727,6 +873,10 @@ int eshm_write(ESHMHandle* handle, const void* data, size_t size) {
 
     __sync_fetch_and_add(&channel->write_count, 1);
 
+    // Wake a parked reader. No syscall unless one is registered, so a hot
+    // producer/consumer pair never pays for this.
+    channel_signal(channel);
+
     return ESHM_SUCCESS;
 }
 
@@ -764,6 +914,7 @@ int eshm_read_timeout(ESHMHandle* handle, void* buffer, size_t buffer_size,
     }
 
     uint64_t start_time = get_time_ms();
+    uint32_t spins = 0;
 
     // Use persistent tracking across calls instead of resetting each time
     // This ensures we don't miss messages that arrived between calls
@@ -785,10 +936,18 @@ int eshm_read_timeout(ESHMHandle* handle, void* buffer, size_t buffer_size,
         // Check if new data is available
         uint64_t current_write_count = channel->write_count;
         if (current_write_count > handle->last_read_write_count) {
-            // New data available, read with sequence lock
+            // New data available, read with sequence lock.
+            //
+            // Retry bounded rather than forever: a writer that died mid-write
+            // leaves the sequence odd, and an unbounded retry would hang this
+            // process permanently instead of letting stale detection notice.
             uint32_t seq;
-            do {
-                seq = seqlock_read_begin(&channel->seqlock);
+            bool snapshot_ok = false;
+
+            for (int attempt = 0; attempt < 16 && !snapshot_ok; ++attempt) {
+                if (!seqlock_read_begin_bounded(&channel->seqlock, &seq)) {
+                    break;      // writer appears to have died mid-write
+                }
 
                 // Check buffer size
                 if (buffer_size < channel->data_size) {
@@ -803,28 +962,74 @@ int eshm_read_timeout(ESHMHandle* handle, void* buffer, size_t buffer_size,
                     *bytes_read = data_size;
                 }
 
-            } while (seqlock_read_retry(&channel->seqlock, seq));
+                snapshot_ok = !seqlock_read_retry(&channel->seqlock, seq);
+            }
 
-            __sync_fetch_and_add(&channel->read_count, 1);
+            if (snapshot_ok) {
+                __sync_fetch_and_add(&channel->read_count, 1);
 
-            // Update persistent read tracking to current write count
-            handle->last_read_write_count = current_write_count;
+                // Update persistent read tracking to current write count
+                handle->last_read_write_count = current_write_count;
 
-            return ESHM_SUCCESS;
+                return ESHM_SUCCESS;
+            }
+
+            // No stable snapshot. Fall through to the wait path below, so the
+            // caller's timeout still applies and the monitor thread gets a
+            // chance to declare the peer stale.
         }
         
-        // Check timeout
+        // A zero timeout is "try once", the opposite of what 0 means in
+        // ESHMConfig. Return before touching the futex: a non-blocking read
+        // must never register as a waiter.
         if (timeout_ms == 0) {
             return ESHM_ERROR_NO_DATA;
         }
-        
-        uint64_t elapsed = get_time_ms() - start_time;
-        if (elapsed >= timeout_ms) {
-            return ESHM_ERROR_TIMEOUT;
+
+        uint32_t remaining_ms = ESHM_WAKE_RECHECK_MS;
+        if (timeout_ms != ESHM_TIMEOUT_INFINITE) {
+            uint64_t elapsed = get_time_ms() - start_time;
+            if (elapsed >= timeout_ms) {
+                return ESHM_ERROR_TIMEOUT;
+            }
+            uint64_t left = timeout_ms - elapsed;
+            remaining_ms = (left > ESHM_WAKE_RECHECK_MS)
+                           ? ESHM_WAKE_RECHECK_MS : (uint32_t)left;
         }
-        
-        // Sleep a bit before retrying
-        usleep(100);  // 100us
+
+        if (handle->wakeup_mode == ESHM_WAKEUP_POLL) {
+            // Caller opted out of push: behave exactly as before.
+            usleep(100);  // 100us
+            continue;
+        }
+
+        // Spin briefly before parking. A hot producer/consumer pair finds its
+        // data inside this window and never registers as a waiter, which keeps
+        // the writer's wake path syscall-free and preserves peak throughput.
+        if (spins < ESHM_WAKE_SPINS) {
+            ++spins;
+            cpu_relax();
+            continue;
+        }
+
+        // Park. Sample wake_seq first, then re-check for data: FUTEX_WAIT
+        // compares the word against `seen` inside the kernel and returns
+        // EAGAIN rather than blocking if the writer moved it in between, which
+        // is what closes the check-then-wait race.
+        uint32_t seen = __atomic_load_n(&channel->wake_seq, __ATOMIC_ACQUIRE);
+        if (channel->write_count > handle->last_read_write_count) {
+            continue;
+        }
+
+        __atomic_add_fetch(&channel->waiters, 1, __ATOMIC_SEQ_CST);
+        futex_wait(&channel->wake_seq, seen, remaining_ms);
+        __atomic_sub_fetch(&channel->waiters, 1, __ATOMIC_SEQ_CST);
+
+        // Every futex_wait outcome - woken, timed out, EAGAIN, EINTR, or
+        // EFAULT because reconnection unmapped the segment underneath us -
+        // means the same thing here: go round and re-evaluate from scratch.
+        // The loop head re-checks handle->shm_data, so a vanished mapping is
+        // handled by the existing detach path rather than needing its own case.
     }
 }
 
@@ -910,6 +1115,39 @@ int eshm_get_stats(ESHMHandle* handle, ESHMStats* stats) {
     stats->s2m_write_count = handle->shm_data->slave_to_master.write_count;
     stats->s2m_read_count = handle->shm_data->slave_to_master.read_count;
     
+    return ESHM_SUCCESS;
+}
+
+int eshm_set_wakeup_mode(ESHMHandle* handle, enum ESHMWakeupMode mode) {
+    if (!handle) {
+        return ESHM_ERROR_INVALID_PARAM;
+    }
+    if (mode != ESHM_WAKEUP_PUSH && mode != ESHM_WAKEUP_POLL) {
+        return ESHM_ERROR_INVALID_PARAM;
+    }
+
+    handle->wakeup_mode = mode;
+    __sync_synchronize();
+
+    // A reader already parked on the futex is waiting on a bounded timeout, so
+    // it will pick the new mode up within ESHM_WAKE_RECHECK_MS on its own. Wake
+    // it anyway so switching to POLL takes effect immediately rather than after
+    // an unexplained pause.
+    if (mode == ESHM_WAKEUP_POLL && handle->shm_data) {
+        ESHMData* data = handle->shm_data;
+        futex_wake_all(&data->master_to_slave.wake_seq);
+        futex_wake_all(&data->slave_to_master.wake_seq);
+    }
+
+    return ESHM_SUCCESS;
+}
+
+int eshm_get_wakeup_mode(ESHMHandle* handle, enum ESHMWakeupMode* mode) {
+    if (!handle || !mode) {
+        return ESHM_ERROR_INVALID_PARAM;
+    }
+
+    *mode = handle->wakeup_mode;
     return ESHM_SUCCESS;
 }
 

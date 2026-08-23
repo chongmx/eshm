@@ -13,6 +13,7 @@ attaches and prints a stats line twice a second. Both exist in C++ and Python.
 | Negotiated role | `eshm_get_role(handle, &role)` | `conn.get_role()` |
 | Peer not stale | `eshm_check_remote_alive(handle, &alive)` | `conn.is_remote_alive()` |
 | Manual heartbeat | `eshm_update_heartbeat(handle)` | — |
+| Wakeup mode | `eshm_get_wakeup_mode(handle, &mode)` | `conn.wakeup_mode` |
 | Error text | `eshm_error_string(rc)` | exception message |
 
 ### Every field of `ESHMStats`

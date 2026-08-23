@@ -38,7 +38,7 @@ usage() {
     cat <<EOF
 Options:
   -n, --name NAME        runtime package name (default: $NAME; dev package: NAME-dev)
-  -v, --version VER      package version (default: the project version, 1.0.0)
+  -v, --version VER      package version (default: read from CMakeLists.txt)
   -m, --maintainer STR   Maintainer field (default: \$DEBFULLNAME <\$DEBEMAIL>)
   -o, --output DIR       where to write the .deb files (default: dist/)
   -b, --build-dir DIR    build directory (default: build-deb/)

@@ -74,7 +74,12 @@ int eshm_read(ESHMHandle* handle, void* buffer, size_t buffer_size);
 //   buffer: buffer to receive data
 //   buffer_size: size of buffer
 //   bytes_read: pointer to receive actual bytes read (can be NULL)
-//   timeout_ms: timeout in milliseconds (0 = non-blocking)
+//   timeout_ms: how long to wait for data:
+//               0                     - do not wait, return ESHM_ERROR_NO_DATA
+//               1..UINT32_MAX-1       - wait up to this many milliseconds
+//               ESHM_TIMEOUT_INFINITE - wait until data arrives
+//               (note: 0 means the opposite here to what it means in
+//                ESHMConfig, where 0 means "unlimited")
 // Returns: ESHM_SUCCESS on success, ESHM_ERROR_NO_DATA if no data, error code on failure
 int eshm_read_ex(ESHMHandle* handle, void* buffer, size_t buffer_size,
                  size_t* bytes_read, uint32_t timeout_ms);
@@ -88,7 +93,8 @@ int eshm_read_ex(ESHMHandle* handle, void* buffer, size_t buffer_size,
 //   out_values: output array of void* for values (will be allocated by function)
 //   max_items: maximum number of items that can be decoded
 //   item_count: pointer to receive actual number of items decoded
-//   timeout_ms: timeout in milliseconds (0 = non-blocking)
+//   timeout_ms: as for eshm_read_ex(): 0 = do not wait,
+//               ESHM_TIMEOUT_INFINITE = wait until data arrives
 // Returns: ESHM_SUCCESS on success, error code on failure
 // Note: Caller must call eshm_free_value() for each decoded item
 int eshm_read_data(ESHMHandle* handle,
@@ -138,6 +144,30 @@ int eshm_get_role(ESHMHandle* handle, enum ESHMRole* role);
 //   error_code: error code
 // Returns: string description of error
 const char* eshm_error_string(int error_code);
+
+// Set how blocking reads on this handle wait for data.
+//
+// ESHM_WAKEUP_PUSH (the default) parks on a futex inside the shared segment and
+// is woken by the peer's write: microsecond latency, no CPU while idle.
+// ESHM_WAKEUP_POLL restores the previous behaviour - an internal poll loop that
+// still honours timeout_ms - for callers who would rather drive their own loop.
+//
+// Affects reading only, and only this endpoint. A writer wakes a parked peer
+// regardless of its own mode, so the two ends never have to agree.
+// Safe to call at any time, including while another thread is blocked in a
+// read; the change takes effect on that read's next wait.
+// Parameters:
+//   handle: ESHM handle
+//   mode: ESHM_WAKEUP_PUSH or ESHM_WAKEUP_POLL
+// Returns: ESHM_SUCCESS on success, error code on failure
+int eshm_set_wakeup_mode(ESHMHandle* handle, enum ESHMWakeupMode mode);
+
+// Get the wakeup mode currently in effect for this handle
+// Parameters:
+//   handle: ESHM handle
+//   mode: pointer to receive the current mode
+// Returns: ESHM_SUCCESS on success, error code on failure
+int eshm_get_wakeup_mode(ESHMHandle* handle, enum ESHMWakeupMode* mode);
 
 // Default configuration
 static inline ESHMConfig eshm_default_config(const char* shm_name) {

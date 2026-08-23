@@ -1,25 +1,78 @@
 # ESHM Changelog
 
-## Unreleased - Examples reorganised, C++/Python interop fixed
+## 1.1.0 - 2026-08-23
+
+Two themes: push wakeup for the read path, and a reorganised example tree that
+turned up three latent bugs on the way.
+
+**Upgrading:** the shared-memory protocol went from v2 to v3, so **both ends of
+a channel must be rebuilt together**. The C ABI did not change (new symbols
+only, `SOVERSION` stays 1), so anything that merely links against ESHM keeps
+working without recompilation. `eshm_init()` now refuses a mismatched peer with
+a diagnostic instead of failing later in a harder-to-read way.
+
+### Added - push wakeup
+
+- **`ESHM_WAKEUP_PUSH` is the default.** A blocking read now parks on a futex
+  inside the shared segment and is woken by the peer's write, instead of waking
+  every 100 us to look. Measured on the round-trip benchmark
+  (`examples/08_benchmark`): **1,694,894 round trips/s, vs 5,174/s polling** -
+  the old path slept 100 us on every miss, so a request/response pair paid two
+  sleeps per exchange. An idle reader now uses **0.5 ms of CPU per 300 ms of
+  waiting instead of 18 ms**, with 6 context switches instead of ~1,700.
+- **`eshm_set_wakeup_mode()` / `eshm_get_wakeup_mode()`** to opt out.
+  `ESHM_WAKEUP_POLL` restores the previous behaviour exactly. Deliberately a
+  setter rather than an `ESHMConfig` field: adding a field would change the
+  struct size and break the ABI for already-compiled callers.
+- **`ESHM_TIMEOUT_INFINITE`** for reads that should wait until data arrives.
+  Previously there was no way to express this - callers had to loop.
+- The writer skips the wake syscall entirely unless a reader is parked, and a
+  reader spins briefly before parking, so a hot producer/consumer pair never
+  enters the kernel on either side.
+
+### Added - protocol v3 and validation
+
+- **`ESHMHeader.features`**, a capability bitmask. A monotonic version cannot
+  express "supports X independently of Y"; this can, so future additive
+  features need no version bump.
+- **`ESHMHeader.layout_size`**, and `eshm_init()` now validates magic,
+  `version` and `layout_size` on attach. `version` was previously written once
+  and **never read by anything**.
+- All four new fields were carved from existing padding, so **no struct
+  changed size**; `static_assert`s in `src/eshm.cpp` enforce that.
 
 ### Fixed
+
+- **Two peers built with different `ESHM_MAX_DATA_SIZE` used to SIGBUS.** The
+  larger build mapped its own `sizeof(ESHMData)` over a smaller segment and
+  faulted past end-of-file on its first channel access. Now rejected at attach:
+  `memory layout mismatch (segment is 8576 bytes, this build expects 16768 ...)`.
 - **C++ -> Python DER decoding never worked.** `DEREncoder` in C++ emits the
   SEQUENCE tag as `0x30` (constructed bit set, correct DER) while the Python
   decoder compared against a bare `0x10` and rejected it, so every buffer a C++
   peer encoded failed to decode in Python. `py/data_handler.py` now compares
-  only the tag number (`tag & 0x1F`), the way `DERDecoder` in
-  `src/asn1_decode.cpp` always has. The Python *encoder* is unchanged, so the
-  wire format is untouched and no existing peer is affected.
+  only the tag number (`tag & 0x1F`), as `src/asn1_decode.cpp` always has. The
+  Python *encoder* is unchanged, so the wire format is untouched.
 - **Reconnection delivered no data.** On a successful reattach the monitor
   thread reset every counter except `last_read_write_count`, which still held
-  the dead master's final write count. Because the new master's channel starts
-  at 0, `eshm_read_timeout()` discarded everything it wrote until it passed the
-  old total - so a slave would log `RECONNECTED` and then sit silent. It is now
-  zeroed on reattach, and the next read re-baselines against the new channel.
-- **BINARY values were dropped by the native Python path.** `ESHMData.write_data()`
-  raised on `DataType.BINARY` and `read_data()` decoded it to `None`, even though
-  the C API marshals it as `struct { uint8_t* data; size_t len; }` and the C++
-  side round-trips it fine. Both directions now handle it.
+  the dead master's final write count. Because a new master's channel starts at
+  0, everything it wrote was discarded until it passed the old total - a slave
+  would log `RECONNECTED` and then sit silent.
+- **BINARY values were dropped by the native Python path.**
+  `ESHMData.write_data()` raised on `DataType.BINARY` and `read_data()` decoded
+  it to `None`, though the C API marshals it correctly.
+- A reader parked during reconnection is now woken before the monitor unmaps
+  the segment, rather than waiting on an address about to stop existing.
+- **A writer killed mid-write hung every subsequent reader, permanently.**
+  `seqlock_read_begin()` spins while the sequence number is odd, and a writer
+  killed between `seqlock_write_begin()` and `seqlock_write_end()` leaves it
+  odd forever - so the reader spun at 100% CPU until its own process was
+  killed. This is the exact failure mode the lock-free design exists to
+  survive, and it was reachable by anything that terminated a peer at the wrong
+  instant. The read path now bounds the wait (`ESHM_SEQLOCK_STALL_MS`, 100 ms)
+  and falls through to the caller's timeout, letting stale detection and
+  reconnection handle it. Found while benchmarking; pre-existing, not
+  introduced by the wakeup work.
 
 ### Changed
 - **examples/ reorganised into nine numbered directories**, each self-contained,
@@ -64,7 +117,7 @@
 - Fixed README references to `py/examples/performance_test.py` and
   `py/examples/benchmark_slave.py`, neither of which has ever existed.
 
-## Unreleased - Installation, packaging and Python bindings
+### Added - installation, packaging and Python bindings (also first shipped in 1.1.0)
 
 ### Added
 - **LICENSE**: MIT.

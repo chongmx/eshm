@@ -26,7 +26,7 @@ instead if you only want the ASN.1 codec and never open a channel.
 ### Option 1 — installed
 
 ```bash
-sudo apt install ./libeshm1_1.0.0_amd64.deb ./libeshm-dev_1.0.0_amd64.deb
+sudo apt install ./libeshm1_1.1.0_amd64.deb ./libeshm-dev_1.1.0_amd64.deb
 cmake -S . -B build && cmake --build build
 ```
 

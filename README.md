@@ -327,13 +327,23 @@ python3 py/tests/performance/benchmark_slave.py eshm1 1000
 
 **Performance Results:**
 
-| Configuration | Throughput | Test Duration | Tool |
-|--------------|------------|---------------|------|
-| **C++ Master ↔ C++ Slave** | **~2.7M msg/sec** | **30s** | **build/test/test_benchmark_master** |
-| **C++ Master ↔ Python Slave** | **~2,700-2,800 msg/sec** | **30s** | **build/test/test_benchmark_master + py/tests/performance/benchmark_slave.py** |
-| **Python Master ↔ Python Slave** | **~2,000-2,400 msg/sec** | **30s** | **py/tests/performance/benchmark_master.py + benchmark_slave.py** |
+Complete round trips per second (write + read the reply), measured with
+`examples/08_benchmark` on one machine. Push wakeup is the default from 1.1.0;
+`--poll` selects the pre-1.1.0 behaviour, so both columns come from the same
+binary on the same hardware.
 
-All tests use bidirectional communication (read message + send ACK response).
+| Configuration | Push (default) | Poll (pre-1.1.0) |
+|---|---|---|
+| **C++ ↔ C++** | **1,981,817/sec** (0.5 µs) | 5,492/sec (182 µs) |
+| **C++ ↔ Python** | **205,882/sec** (4.9 µs) | 5,235/sec (191 µs) |
+
+Request/response is the worst case for polling: the old read path slept 100 µs
+on *every* miss, and a round trip contains two of them. Streaming, where the
+reader rarely misses, is largely unaffected.
+
+Absolute numbers vary by an order of magnitude across machines - run
+`./build/examples/08_benchmark/bench` on your own hardware before designing
+around a figure. The ratios are the portable part.
 
 ## Configuration Options
 
@@ -345,6 +355,25 @@ All tests use bidirectional communication (read message + send ACK response).
 | `reconnect_wait_ms` | Total wait time for reconnection (0 = unlimited) | 5000ms |
 | `use_threads` | Use dedicated threads for heartbeat/monitoring | true |
 | `disconnect_behavior` | Behavior on stale master (IMMEDIATELY, ON_TIMEOUT, NEVER) | ON_TIMEOUT |
+
+Wakeup mode is deliberately **not** in `ESHMConfig` - adding a field would
+change the struct size and break the ABI for already-compiled callers. It is a
+setter instead, and push wakeup is on by default:
+
+```c
+eshm_set_wakeup_mode(handle, ESHM_WAKEUP_POLL);   // opt out of push
+```
+
+### `0` means opposite things in the two halves of the API
+
+| Where | `0` means |
+|---|---|
+| `ESHMConfig.reconnect_wait_ms` | wait **indefinitely** |
+| `ESHMConfig.max_reconnect_attempts` | **unlimited** |
+| `eshm_read_ex(timeout_ms)` | **do not wait at all** |
+| `eshm_read_data(timeout_ms)` | **do not wait at all** |
+
+To block until data arrives, pass `ESHM_TIMEOUT_INFINITE`, not `0`.
 
 ## C++ ↔ Python Interoperability
 
@@ -458,7 +487,9 @@ ESHMData (~8.5 KB with default ESHM_MAX_DATA_SIZE=4096):
 | Metric | Value | Details |
 |--------|-------|---------|
 | **Throughput** | 3.3M+ msg/sec | C++ write benchmark |
+| **Round trip** | ~0.5 µs | C++ ↔ C++, push wakeup |
 | **Read Latency** | <100ns | Lock-free sequence locks |
+| **Idle reader CPU** | ~0 | Parks on a futex; 0.5 ms CPU per 300 ms waiting |
 | **Write Latency** | <200ns | Two memory barriers + memcpy |
 | **Heartbeat Rate** | 1000 updates/sec | 1ms interval |
 | **Stale Detection** | 100ms | Configurable threshold |
@@ -499,12 +530,19 @@ while (running) {
 - `eshm_write(handle, data, size)` - Write data (auto-selects channel)
 - `eshm_read(handle, buffer, size)` - Read with default 1000ms timeout (returns bytes read or negative error)
 - `eshm_read_ex(handle, buffer, size, bytes_read, timeout_ms)` - Read with custom timeout
+  (`0` = do not wait, `ESHM_TIMEOUT_INFINITE` = wait until data arrives)
 
 ### Monitoring
 - `eshm_check_remote_alive(handle, alive)` - Check if remote endpoint is alive
 - `eshm_get_stats(handle, stats)` - Get statistics (heartbeat, PIDs, message counts)
 - `eshm_get_role(handle, role)` - Get current role (MASTER/SLAVE)
 - `eshm_error_string(error)` - Get error description
+
+### Wakeup
+- `eshm_set_wakeup_mode(handle, mode)` - `ESHM_WAKEUP_PUSH` (default) parks on a
+  futex and is woken by the peer's write; `ESHM_WAKEUP_POLL` restores the older
+  internal poll loop
+- `eshm_get_wakeup_mode(handle, mode)` - Read the mode currently in effect
 
 ### Error Codes
 - `ESHM_SUCCESS` - Operation successful
@@ -601,15 +639,19 @@ See [test/image_transfer/README.md](test/image_transfer/README.md) for details.
 
 ## Library Information
 
-**Version:** 1.0.0
+**Version:** 1.1.0
 
 **Shared Libraries:**
-- `libeshm.so.1.0.0` - Core ESHM library (~155 KB with default 4KB channels)
-- `libeshm_data.so.1.0.0` - ASN.1 data handler library (~920 KB)
+- `libeshm.so.1.1.0` - Core ESHM library (~155 KB with default 4KB channels)
+- `libeshm_data.so.1.1.0` - ASN.1 data handler library (~920 KB)
 
 **Versioning:**
 - SOVERSION: 1 (binary compatibility within major version)
-- Full version: 1.0.0 (follows semantic versioning)
+- Full version: 1.1.0 (follows semantic versioning)
+- Shared-memory protocol: `ESHM_VERSION` 3, validated on attach. This is
+  versioned separately from the library because it changed incompatibly in
+  1.1.0 while the C ABI did not - both ends of a channel must be built
+  against the same `ESHM_VERSION`
 
 **CMake Namespace:** `ESHM::`
 - Link with `ESHM::eshm` to get both core and data libraries

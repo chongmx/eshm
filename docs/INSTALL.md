@@ -28,8 +28,8 @@ sudo ldconfig                                   # refresh the linker cache
 This installs:
 
 ```
-<prefix>/lib/libeshm.so{,.1,.1.0.0}         <prefix>/include/eshm.h
-<prefix>/lib/libeshm_data.so{,.1,.1.0.0}    <prefix>/include/eshm_data.h
+<prefix>/lib/libeshm.so{,.1,.1.1.0}         <prefix>/include/eshm.h
+<prefix>/lib/libeshm_data.so{,.1,.1.1.0}    <prefix>/include/eshm_data.h
 <prefix>/lib/cmake/ESHM/*.cmake             <prefix>/include/eshm_config.h
 <prefix>/lib/python3*/dist-packages/eshm/   <prefix>/include/asn1_der.h
 <prefix>/share/doc/eshm/{LICENSE,README.md} <prefix>/include/data_handler.h
@@ -75,8 +75,8 @@ Install and remove them:
 
 ```bash
 cd dist
-sudo apt install ./libeshm1_1.0.0_amd64.deb ./libeshm-dev_1.0.0_amd64.deb \
-                 ./python3-eshm_1.0.0_all.deb
+sudo apt install ./libeshm1_1.1.0_amd64.deb ./libeshm-dev_1.1.0_amd64.deb \
+                 ./python3-eshm_1.1.0_all.deb
 sudo apt remove python3-eshm libeshm-dev libeshm1     # or: apt purge
 ```
 
@@ -94,7 +94,7 @@ instead. Copy the packages to `/tmp` first to avoid it.
 * Policy §8.1.1: the runtime activates libc's `ldconfig` trigger
   (`DEBIAN/triggers`) instead of calling `ldconfig` from maintainer scripts.
 * Policy §8.6: the runtime ships a `shlibs` file, so `dpkg-shlibdeps` gives
-  downstream packages `Depends: libeshm1 (>= 1.0.0)` automatically.
+  downstream packages `Depends: libeshm1 (>= 1.1.0)` automatically.
 * Policy §12.5: every package carries `copyright` and `changelog.Debian.gz`.
 * `Multi-Arch: same` on the runtime (dropped under `--with-tools`, which adds
   non-multiarch paths).

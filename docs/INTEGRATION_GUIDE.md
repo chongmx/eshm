@@ -270,10 +270,10 @@ sudo ldconfig
 
 ```bash
 cd your_project/3rdparty/eshm
-git checkout v1.0.0
+git checkout v1.1.0
 cd ../..
 git add 3rdparty/eshm
-git commit -m "Use ESHM v1.0.0"
+git commit -m "Use ESHM v1.1.0"
 ```
 
 ---

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Python side of example 08 - throughput and the cost of each codec path.
 
-    python3 bench.py drive [channel] [--seconds S] [--size N]
-    python3 bench.py echo  [channel]
+    python3 bench.py drive [channel] [--seconds S] [--size N] [--poll]
+    python3 bench.py echo  [channel] [--poll]
     python3 bench.py codec [--records N]     # no channel: encode/decode only
 
 Pairs with ./bench in either direction:
@@ -24,11 +24,11 @@ import time
 from pathlib import Path
 
 try:
-    from eshm import ESHM, ESHMRole, DataHandler
+    from eshm import ESHM, ESHMRole, ESHMWakeupMode, DataHandler
     from eshm.eshm_data import ESHMData, DataItem, DataType
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "py"))
-    from eshm import ESHM, ESHMRole
+    from eshm import ESHM, ESHMRole, ESHMWakeupMode
     from data_handler import DataHandler
     from eshm_data import ESHMData, DataItem, DataType
 
@@ -36,12 +36,20 @@ CHANNEL_DEFAULT = "bench"
 MAX_DATA_SIZE = int(os.environ.get("ESHM_MAX_DATA_SIZE", 4096))
 
 
+FLAGS = {"poll"}          # options that take no value
+
+
 def parse(argv):
     channel, opts, i = CHANNEL_DEFAULT, {}, 0
     while i < len(argv):
         if argv[i].startswith("--"):
-            opts[argv[i][2:]] = argv[i + 1]
-            i += 2
+            name = argv[i][2:]
+            if name in FLAGS:
+                opts[name] = True
+                i += 1
+            else:
+                opts[name] = argv[i + 1]
+                i += 2
         else:
             channel = argv[i]
             i += 1
@@ -53,7 +61,10 @@ def drive(channel: str, opts) -> int:
     size = min(int(opts.get("size", 256)), MAX_DATA_SIZE)
 
     with ESHM(channel, role=ESHMRole.MASTER) as conn:
-        print(f"bench: channel '{channel}' is live, waiting for an echo peer...", flush=True)
+        if opts.get("poll"):
+            conn.wakeup_mode = ESHMWakeupMode.POLL
+        print(f"bench: channel '{channel}' is live, waiting for an echo peer... "
+              f"(wakeup: {conn.wakeup_mode.name})", flush=True)
         for _ in range(300):
             if conn.get_stats()["slave_alive"]:
                 break
@@ -100,7 +111,10 @@ def echo(channel: str, opts) -> int:
         print(f"bench: no channel '{channel}' - is a driver running?", file=sys.stderr)
         return 1
 
-    print(f"bench: echoing on '{channel}' (Ctrl-C to stop)", flush=True)
+    if opts.get("poll"):
+        conn.wakeup_mode = ESHMWakeupMode.POLL
+    print(f"bench: echoing on '{channel}' (Ctrl-C to stop) "
+          f"(wakeup: {conn.wakeup_mode.name})", flush=True)
     echoed = 0
     seen_driver = False
 

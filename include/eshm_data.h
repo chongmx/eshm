@@ -7,7 +7,29 @@
 #include "eshm_config.h"
 
 #define ESHM_MAGIC 0x4553484D  // "ESHM"
-#define ESHM_VERSION 2
+
+/* Layout/protocol version of the shared segment.
+ *
+ * Bumped to 3 when push wakeup landed: ESHMChannel repurposed 8 bytes of its
+ * padding for the futex word and waiter count, and ESHMHeader repurposed 8 for
+ * `features` and `layout_size`. Struct sizes are unchanged, but the meaning of
+ * those bytes is not, so a v2 peer and a v3 peer must not share a segment.
+ * eshm_init() validates this on attach and refuses a mismatch. */
+#define ESHM_VERSION 3
+
+/* Capability bits published in ESHMHeader.features by whoever creates the
+ * segment. A monotonic version cannot express "supports X independently of Y";
+ * this can, so future additive features do not need a version bump. */
+#define ESHM_FEATURE_FUTEX_WAKE 0x00000001u
+
+/* Wait forever in eshm_read_ex()/eshm_read_data(). Distinct from 0, which
+ * means the opposite - return immediately without waiting.
+ *
+ * Note the asymmetry with ESHMConfig, where 0 means "unlimited"
+ * (reconnect_wait_ms, max_reconnect_attempts). In the read functions 0 means
+ * "do not wait at all". Same literal, inverted meaning. */
+#define ESHM_TIMEOUT_INFINITE 0xFFFFFFFFu
+
 /* ESHM_MAX_DATA_SIZE and ESHM_HEARTBEAT_INTERVAL_MS are now defined in eshm_config.h */
 
 // Channel states
@@ -44,6 +66,16 @@ enum ESHMError {
     ESHM_ERROR_ROLE_MISMATCH = -15
 };
 
+// How a blocking read waits for data.
+//
+// Only affects reading, and only on this endpoint. The write side always wakes
+// a parked peer when one is registered, whatever mode the writer itself is in -
+// so flipping this on one side never strands the other.
+enum ESHMWakeupMode {
+    ESHM_WAKEUP_PUSH = 0,  // Default: park on a futex, woken by the writer
+    ESHM_WAKEUP_POLL = 1   // Never park; poll internally as before
+};
+
 // Disconnect behavior on stale master detection
 enum ESHMDisconnectBehavior {
     ESHM_DISCONNECT_IMMEDIATELY = 0,  // Disconnect immediately on stale master
@@ -57,13 +89,20 @@ struct ESHMSeqLock {
 };
 
 // Single direction channel with sequence lock (unidirectional)
+//
+// wake_seq/waiters implement push wakeup. They are carved out of the former
+// 48-byte padding, so sizeof(ESHMChannel) is unchanged (a static_assert in
+// eshm.cpp enforces that). One pair per direction: a master's write must wake
+// the slave, never the master.
 struct ESHMChannel {
     struct ESHMSeqLock seqlock;        // Sequence lock for lock-free reads
     volatile uint32_t data_size;       // Size of data in buffer
     uint8_t data[ESHM_MAX_DATA_SIZE]; // Data buffer
     volatile uint64_t write_count;     // Number of writes
     volatile uint64_t read_count;      // Number of reads
-    uint8_t padding[48];               // Cache line padding
+    volatile uint32_t wake_seq;        // Bumped by the writer; the futex word
+    volatile uint32_t waiters;         // Readers currently parked on wake_seq
+    uint8_t padding[40];               // Cache line padding
 } __attribute__((aligned(64)));
 
 // Shared memory header with cache-line alignment
@@ -78,7 +117,9 @@ struct ESHMHeader {
     volatile uint32_t slave_alive;      // Slave alive flag
     volatile uint32_t stale_threshold;  // Stale detection threshold in heartbeat counts
     volatile uint32_t master_generation; // Incremented each time master restarts
-    uint8_t padding[32];                // Cache line padding
+    volatile uint32_t features;         // ESHM_FEATURE_* bits the creator supports
+    uint32_t layout_size;               // sizeof(ESHMData) of the creating build
+    uint8_t padding[24];                // Cache line padding
 } __attribute__((aligned(64)));
 
 // Complete shared memory structure

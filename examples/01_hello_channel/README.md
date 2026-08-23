@@ -14,6 +14,7 @@ memory does not care which language is on the other end.
 | Send | `eshm_write` | `.write(bytes)` |
 | Receive with timeout | `eshm_read_ex(..., 200)` | `.read(timeout_ms=200)` |
 | Receive without blocking | `eshm_read_ex(..., 0)` | `.try_read()` |
+| Wait until data arrives | `eshm_read_ex(..., ESHM_TIMEOUT_INFINITE)` | `.read(timeout_ms=TIMEOUT_INFINITE)` |
 | Decode an error | `eshm_error_string` | exception message |
 | Release | `eshm_destroy` | `with` block / `.close()` |
 
@@ -51,6 +52,23 @@ publisher: channel 'demo' is live (Ctrl-C to stop)
 -> reading 2 temperature=21.0
    <- ack 2
 ```
+
+## `0` does not mean "wait forever"
+
+In the read functions `timeout_ms = 0` means **do not wait at all** — try once
+and return. That is the opposite of what `0` means in `ESHMConfig`, where
+`reconnect_wait_ms = 0` and `max_reconnect_attempts = 0` mean *unlimited*.
+
+| You want | Pass |
+|---|---|
+| Try once, never block | `0` |
+| Wait up to N ms | `N` |
+| Wait until data arrives | `ESHM_TIMEOUT_INFINITE` |
+
+Blocking reads park on a futex and are woken by the peer's write, so waiting is
+cheap — an idle reader uses no CPU. `eshm_set_wakeup_mode(handle,
+ESHM_WAKEUP_POLL)` restores the older polling behaviour if you would rather
+drive your own loop. See [08](../08_benchmark/) for what the difference costs.
 
 ## The two rules that bite everyone
 

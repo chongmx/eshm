@@ -763,19 +763,19 @@ See [test/image_transfer/README.md](test/image_transfer/README.md) for details.
 
 ## Library Information
 
-**Version:** 1.2.0
+**Version:** 1.2.1
 
 **Shared Libraries:**
-- `libeshm.so.1.2.0` - Core ESHM library (~155 KB with default 4KB channels)
-- `libeshm_data.so.1.2.0` - ASN.1 data handler library (~920 KB)
-- `libeshm_cuda.so.1.2.0` - Optional GPU VRAM sharing library, built only
+- `libeshm.so.1.2.1` - Core ESHM library (~155 KB with default 4KB channels)
+- `libeshm_data.so.1.2.1` - ASN.1 data handler library (~920 KB)
+- `libeshm_cuda.so.1.2.1` - Optional GPU VRAM sharing library, built only
   when a CUDA toolkit is found (`-DESHM_ENABLE_CUDA=AUTO|ON|OFF`)
 
 **Versioning:**
 - SOVERSION: 1 (binary compatibility within major version) - unchanged by
-  1.2.0; `eshm_cuda` is new but additive, and nothing in the existing C ABI
-  moved
-- Full version: 1.2.0 (follows semantic versioning)
+  1.2.0/1.2.1; `eshm_cuda` is new but additive, and nothing in the existing
+  C ABI moved
+- Full version: 1.2.1 (follows semantic versioning)
 - Shared-memory protocol: `ESHM_VERSION` 3, validated on attach. This is
   versioned separately from the library because it changed incompatibly in
   1.1.0 while the C ABI did not - both ends of a channel must be built

@@ -122,8 +122,20 @@ fi
 
 echo
 echo "${BOLD}Python - needed for 'from eshm import ESHM'${RESET}"
-PYDIR="$ROOT$PREFIX/lib/python3/dist-packages/eshm"
-if [ -f "$PYDIR/__init__.py" ]; then
+# A /usr install uses the versionless dist-packages directory, but any other
+# prefix (/usr/local, a staging root) uses the interpreter's versioned one -
+# and other distributions use site-packages. Look for all of them.
+PYDIR=""
+for candidate in "$ROOT$PREFIX"/lib/python3/dist-packages/eshm \
+                 "$ROOT$PREFIX"/lib/python3*/dist-packages/eshm \
+                 "$ROOT$PREFIX"/lib/python3*/site-packages/eshm; do
+    if [ -f "$candidate/__init__.py" ]; then
+        PYDIR="$candidate"
+        break
+    fi
+done
+
+if [ -n "$PYDIR" ]; then
     report ok "python3-eshm files" "$PYDIR"
     if [ -z "$ROOT" ] && python3 -c 'import eshm' 2>/dev/null; then
         report ok "import eshm" "$(python3 -c 'import eshm; print(eshm.library_path())' 2>/dev/null)"
@@ -131,7 +143,8 @@ if [ -f "$PYDIR/__init__.py" ]; then
         report no "import eshm" "files present but import failed: $(python3 -c 'import eshm' 2>&1 | tail -1)"
     fi
 else
-    report no "python3-eshm files" "install the 'python3-eshm' package"
+    report no "python3-eshm files" \
+        "install the 'python3-eshm' package, or build with -DESHM_INSTALL_PYTHON=ON"
 fi
 
 echo

@@ -196,8 +196,11 @@ int run_recv(const Options& opt) {
                 (unsigned long long)frames, (unsigned long long)span);
     std::printf("  DELIVERED RATE  %.0f MB/s  (%.2f Gbps)\n", mbs, mbs * 8 / 1000.0);
     if (span) {
+        // frames can exceed span when the publisher is slower than our sampling
+        // window; both are unsigned, so clamp instead of wrapping to ~1.8e19.
+        const uint64_t missed = (span > frames) ? (span - frames) : 0;
         std::printf("  dropped         %.1f%%  (superseded before we read them)\n",
-                    100.0 * (span - frames) / span);
+                    100.0 * (double)missed / (double)span);
     }
     std::printf("  per read        p50 %.0f us   p99 %.0f us\n",
                 pct(read_us, 0.50), pct(read_us, 0.99));

@@ -109,6 +109,21 @@ is state staleness and the rest is two Python-side reads plus a write.
 **Your inference time will dominate.** At any realistic policy cost the
 transport is 3-10% of the loop.
 
+## Pace the publisher
+
+Every number below uses a paced publisher (`--fps N`). An unpaced one
+(`--fps 0`) does not measure a higher ceiling - it measures reader starvation:
+
+| 640x480x3, 4 s | frames published | frames read | delivered |
+|---|---|---|---|
+| `--fps 1000` | 4 000 | 4 000 | 887 MB/s |
+| `--fps 0` | 90 024 | **4** | 1 MB/s |
+
+That is the seqlock working as designed. A reader retries whenever the writer
+touches the buffer mid-copy, so a writer that never pauses can keep a
+large-frame reader retrying almost indefinitely. Real cameras pace themselves;
+if yours does not, pace the publisher or give each frame its own channel.
+
 ## Frame streaming ceiling
 
 `robot_sim` measures a whole control loop. `frame_bench` isolates just the pixel

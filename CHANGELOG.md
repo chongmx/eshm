@@ -1,5 +1,39 @@
 # ESHM Changelog
 
+## 1.2.1 - 2026-08-24
+
+Two bug fixes reported by an end user running ESHM in production, both in
+tooling rather than the library itself - `SOVERSION`/`ESHM_VERSION` are
+unaffected, and no rebuild is required for existing binaries.
+
+### Fixed
+
+- **`scripts/check_install.sh` reported a working install as broken under
+  any prefix other than `/usr`.** The Python check only looked in
+  `<prefix>/lib/python3/dist-packages`, which is where a `/usr` (`.deb`)
+  install lands - but `-DCMAKE_INSTALL_PREFIX=/usr/local` (the default for a
+  source install) puts the package in the interpreter's *versioned*
+  directory instead (`lib/python3.10/dist-packages`, `python3.13/...`,
+  etc.), so a perfectly good source install showed "python3-eshm files: not
+  installed". Now searches the versionless directory, the versioned ones,
+  and `site-packages` (for non-Debian-derived distributions), and reports
+  whichever one actually holds the package.
+- **`examples/11_robot_loop/frame_bench.cpp` printed a nonsensical drop
+  percentage** (`1844674407370955161600.0%`) on an unpaced (`--fps 0`) run.
+  `span - frames` is computed on `uint64_t`, and an unpaced publisher can
+  read `frames > span` within the sampling window, wrapping the subtraction
+  to ~1.8e19 instead of going negative. Clamped to 0 instead of wrapping.
+  The underlying run is itself worth knowing about and is now documented in
+  the example's README: an unpaced publisher does not measure a higher
+  throughput ceiling, it measures **reader starvation** - a seqlock reader
+  retries whenever the writer touches the buffer mid-copy, so a writer that
+  never pauses can starve a large-frame reader down to near zero delivered
+  reads (887 MB/s at `--fps 1000` vs. 1 MB/s at `--fps 0` for the same
+  640x480 case). Every measured number elsewhere in that README already used
+  a paced publisher; this makes explicit why that matters, the same lesson
+  [examples/12_gpu_shared_tensor](examples/12_gpu_shared_tensor/README.md)'s
+  benchmark section reaches independently for VRAM sharing's torn-read rate.
+
 ## 1.2.0 - 2026-08-23
 
 ### Added - GPU VRAM sharing (optional)
